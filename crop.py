@@ -3,11 +3,27 @@ import json
 from PIL import Image
 import os
 import random
-from typing import TextIO, Dict, List
+from typing import Dict, List, Tuple
 
 
-#exp_code_location_offset = {"mrd": (-10, 0), "znr": (10, 0)}
-exp_code_location_offset = {}
+def get_crop_exp(exp_code: str, rarity: str, color: str, illustration_id: str) -> Tuple[Image, Dict[str, str]]:
+    input_folder = f"mtg_images_{exp_code}"
+    output_folder = os.path.join("exp_code")
+    os.makedirs(output_folder, exist_ok=True)
+    height = 80
+    width = 80
+    x = 430
+    y = 400
+    assert (x + width / 2 < 488)
+
+    input_path = os.path.join(input_folder, illustration_id + '.jpg')
+
+    # Open and crop the image
+    image = Image.open(input_path)
+    crop_box = (x - width / 2, y - height / 2, x + width / 2, y + height / 2)  # Example coordinates
+    cropped_image = image.crop(crop_box)
+
+    return cropped_image, {'exp_code': exp_code, 'rarity': rarity, 'color': color}
 
 
 def crop_image(exp_code: str, labels: Dict, rarity: str, color: str, illustration_id: str):
@@ -16,8 +32,8 @@ def crop_image(exp_code: str, labels: Dict, rarity: str, color: str, illustratio
     os.makedirs(output_folder, exist_ok=True)
     height = 80
     width = 80
-    x = 430 + exp_code_location_offset.get(exp_code, (0, 0))[0]
-    y = 400 + exp_code_location_offset.get(exp_code, (0, 0))[1]
+    x = 430
+    y = 400
     assert(x + width / 2 < 488)
 
     input_path = os.path.join(input_folder, illustration_id + '.jpg')
@@ -86,10 +102,28 @@ def crop_exp_codes(exp_codes: List[str]):
         json.dump(labels, output, indent=4)
 
 
-def get_crop_and_label(exp_code: str):
-    labels = {}
-    get_crop_exp_code(exp_code, labels)
+def get_crop_and_labels(exp_code: str) -> List[Tuple[Image, Dict[str, str]]]:
+    crop_and_labels: List[Tuple[Image, Dict[str, str]]] = []
+    with open(f'result_{exp_code}.json', 'r') as file:
+        cards = json.load(file)
 
+        for card in cards:
+            rarity = card['rarity']
+
+            # Some cards have multiple faces
+            if "image_uris" in card:
+                # Single-faced card
+                colors = card['colors']
+                color = "none" if not colors else "multi" if len(colors) > 1 else colors[0]
+                crop_and_labels.append(get_crop_exp(exp_code, rarity, color, f"{card['illustration_id']}"))
+            elif "card_faces" in card:
+                # Double-faced card
+                for i, face in enumerate(card["card_faces"]):
+                    if "image_uris" in face:
+                        colors = face['colors']
+                        color = "none" if not colors else "multi" if len(colors) > 1 else colors[0]
+                        crop_and_labels.append(get_crop_exp(exp_code, rarity, color, f"{face['illustration_id']}"))
+    return crop_and_labels
 
 
 def crop():

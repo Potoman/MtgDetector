@@ -4,6 +4,7 @@ import tensorflow as tf
 #from tensorflow.keras import layers, models
 import numpy as np
 from PIL import Image
+import crop
 
 # Parameters
 image_size = (80, 80)
@@ -90,3 +91,22 @@ class StopAtAccuracy(tf.keras.callbacks.Callback):
 model.fit(augmented_ds,
           epochs=epochs,
           callbacks=[StopAtAccuracy(0.97)])
+
+crop_and_labels = crop.get_crop_and_labels('mrd')
+print(f"Card in mrd : {len(crop_and_labels)}")
+
+imgs_train = np.zeros((len(crop_and_labels), 80, 80, 3), dtype=np.float32)
+for index in range(len(crop_and_labels)):
+    imgs_train[index] = crop_and_labels[index][0]
+
+mrd_result = model(imgs_train)
+
+
+crop_and_labels = crop.get_crop_and_labels('znr')
+print(f"Card in znr : {len(crop_and_labels)}")
+
+imgs_train = np.zeros((len(crop_and_labels), 80, 80, 3), dtype=np.float32)
+for index in range(len(crop_and_labels)):
+    imgs_train[index] = crop_and_labels[index][0]
+
+znr_result = model(imgs_train)
