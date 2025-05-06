@@ -1,5 +1,6 @@
+import cv2
 import json
-
+import numpy as np
 from PIL import Image
 import os
 import random
@@ -24,6 +25,11 @@ def get_crop_exp(exp_code: str, rarity: str, color: str, illustration_id: str) -
     cropped_image = image.crop(crop_box)
 
     return cropped_image, {'exp_code': exp_code, 'rarity': rarity, 'color': color}
+
+
+def _get_image_path(exp_code: str, illustration_id: str):
+    input_folder = f"mtg_images_{exp_code}"
+    return os.path.join(input_folder, illustration_id + '.jpg')
 
 
 def crop_image(exp_code: str, labels: Dict, rarity: str, color: str, illustration_id: str):
@@ -131,6 +137,56 @@ def crop():
     labels = {}
     crop_exp_code(exp_code, labels)
     pass
+
+
+def get_rgb_image(exp_code: str, illustration_id: str) -> cv2.typing.MatLike:
+    """
+
+    :param exp_code:
+    :param illustration_id:
+    :return: a RGB card of size 488x680
+    """
+    image = cv2.imread(_get_image_path(exp_code, illustration_id))
+    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    return cv2.resize(image, (488, 680), interpolation=cv2.INTER_LINEAR)
+
+def get_rgba_image(exp_code: str, illustration_id: str) -> cv2.typing.MatLike:
+    """
+
+    :param exp_code:
+    :param illustration_id:
+    :return: a RGB card of size 488x680
+    """
+    image = cv2.imread(_get_image_path(exp_code, illustration_id))
+    image = cv2.resize(image, (488, 680), interpolation=cv2.INTER_LINEAR)
+    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGBA)
+
+    # We delete the white top-left corner
+    mtg_roi = image[0:20, 0:20]
+    mask = np.all(mtg_roi > 125, axis=2)
+    mtg_roi[mask] = (0, 0, 0, 0)
+    image[0:20, 0:20] = mtg_roi
+
+    # We delete the white bottom-left corner
+    mtg_roi = image[660:680, 0:20]
+    mask = np.all(mtg_roi > 125, axis=2)
+    mtg_roi[mask] = (0, 0, 0, 0)
+    image[660:680, 0:20] = mtg_roi
+
+    # We delete the white top-right corner
+    mtg_roi = image[0:20, 468:488]
+    mask = np.all(mtg_roi > 125, axis=2)
+    mtg_roi[mask] = (0, 0, 0, 0)
+    image[0:20, 468:488] = mtg_roi
+
+    # We delete the white bottom-right corner
+    mtg_roi = image[660:680, 468:488]
+    mask = np.all(mtg_roi > 125, axis=2)
+    mtg_roi[mask] = (0, 0, 0, 0)
+    image[660:680, 468:488] = mtg_roi
+
+    return image
+
 
 
 if __name__ == "__main__":
