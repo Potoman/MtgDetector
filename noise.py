@@ -187,12 +187,13 @@ def show_noise():
 def insert_card():
     image = np.zeros((800, 800, 4), dtype=np.uint8)
     cv2.imshow("black image", image)
+
     mtg = crop.get_rgba_image('mrd', 'ef02f536-d59d-4f80-a069-304c4d1bcc28')
-
     cv2.imshow("mtg", mtg)
-    image[60:60+680, 156:156+488] = mtg
 
+    image[60:60+680, 156:156+488] = mtg
     cv2.imshow("mtg in white", image)
+
     cv2.waitKey(0)
     cv2.destroyAllWindows()
 
