@@ -3,6 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import random
 import crop
+from typing import Dict
 
 def add_gaussian_noise(image, mean=0, std=25):
     noise = np.random.normal(mean, std, image.shape).astype(np.int16)
@@ -184,20 +185,45 @@ def show_noise():
     cv2.destroyAllWindows()
 
 
-def insert_card():
-    image = np.zeros((800, 800, 4), dtype=np.uint8)
-    cv2.imshow("black image", image)
+def get_noised_mtg(exp_code: str, illustration_id: str) -> (Dict[str, int], cv2.typing.MatLike):
+    mtg = crop.get_rgba_image(exp_code, illustration_id)
+    w = 488
+    h = 680
+    x0 = random.randint(0, 50)
+    y0 = random.randint(0, 50)
+    x1 = w - random.randint(0, 50)
+    y1 = random.randint(0, 50)
+    x2 = random.randint(0, 50)
+    y2 = h - random.randint(0, 50)
+    x3 = w - random.randint(0, 50)
+    y3 = h - random.randint(0, 50)
+    src_pts = np.float32([[0, 0], [w, 0], [0, h], [w, h]])
+    dst_pts = np.float32([[x0, y0], [x1, y1], [x2, y2], [x3, y3]])
+    m = cv2.getPerspectiveTransform(src_pts, dst_pts)
+    twisted_image = cv2.warpPerspective(mtg, m, (w, h))
+    return {'x0': x0, 'x1': x1, 'x2': x2, 'x3': x3, 'y0': y0, 'y1': y1, 'y2': y2, 'y3': y3}, twisted_image
 
-    mtg = crop.get_rgba_image('mrd', 'ef02f536-d59d-4f80-a069-304c4d1bcc28')
-    cv2.imshow("mtg", mtg)
 
-    image[60:60+680, 156:156+488] = mtg
-    cv2.imshow("mtg in white", image)
-
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
+def get_noised_mtg_in_background(exp_code: str, illustration_id: str) -> (Dict[str, int], cv2.typing.MatLike):
+    background = np.zeros((800, 800, 4), dtype=np.uint8)
+    data, mtg = get_noised_mtg(exp_code, illustration_id)
+    offset_x = random.randint((800 - 488) // 4, ((800 - 488) * 3) // 4)
+    offset_y = random.randint((800 - 680) // 4, ((800 - 680) * 3) // 4)
+    background[offset_y:offset_y+680, offset_x:offset_x+488] = mtg
+    data['x0'] = offset_x + data['x0']
+    data['x1'] = offset_x + data['x1']
+    data['x2'] = offset_x + data['x2']
+    data['x3'] = offset_x + data['x3']
+    data['y0'] = offset_y + data['y0']
+    data['y1'] = offset_y + data['y1']
+    data['y2'] = offset_y + data['y2']
+    data['y3'] = offset_y + data['y3']
+    return data, background
 
 
 if __name__ == '__main__':
-    insert_card()
+    for a in range(100):
+        coord, img = get_noised_mtg_in_background('mrd', 'ef02f536-d59d-4f80-a069-304c4d1bcc28')
+        cv2.imshow("mtg noised", img)
+        cv2.waitKey(0)
 
