@@ -3,6 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import random
 import crop
+import os
 from typing import Dict
 
 def add_gaussian_noise(image, mean=0, std=25):
@@ -205,11 +206,28 @@ def get_noised_mtg(exp_code: str, illustration_id: str) -> (Dict[str, int], cv2.
 
 
 def get_noised_mtg_in_background(exp_code: str, illustration_id: str) -> (Dict[str, int], cv2.typing.MatLike):
-    background = np.zeros((800, 800, 4), dtype=np.uint8)
+    backgrounds = {'Bathroom': ('bath', 1300),
+                   'Bedroom': ('bed', 1432),
+                   'Dinning': ('din', 1593),
+                   'Kitchen': ('kitchen', 1360),
+                   'Livingroom': ('living', 1427)}
+    background = None
+    while background is None:
+        folder = random.choice(list(backgrounds.keys()))
+        sub_image = backgrounds[folder]
+        background_path = os.path.join('archive(6)', 'House_Room_Dataset', folder,
+                                       sub_image[0] + '_' + str(random.randint(1, sub_image[1])) + '.jpg')
+        if os.path.exists(background_path):
+            background = cv2.imread(background_path)
+    background = cv2.resize(background, (800, 800), interpolation=cv2.INTER_LINEAR)
+    background = cv2.cvtColor(background, cv2.COLOR_BGR2RGBA)
     data, mtg = get_noised_mtg(exp_code, illustration_id)
     offset_x = random.randint((800 - 488) // 4, ((800 - 488) * 3) // 4)
     offset_y = random.randint((800 - 680) // 4, ((800 - 680) * 3) // 4)
-    background[offset_y:offset_y+680, offset_x:offset_x+488] = mtg
+    roi = background[offset_y:offset_y + 680, offset_x:offset_x + 488]
+    mtg_mask = mtg[:, :, 3] != 0
+    roi[mtg_mask] = mtg[mtg_mask]
+    background[offset_y:offset_y + 680, offset_x:offset_x + 488] = roi
     data['x0'] = offset_x + data['x0']
     data['x1'] = offset_x + data['x1']
     data['x2'] = offset_x + data['x2']
