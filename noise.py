@@ -242,6 +242,8 @@ def get_noised_mtg_in_background(exp_code: str, illustration_id: str) -> (Dict[s
 if __name__ == '__main__':
     for a in range(100):
         coord, img = get_noised_mtg_in_background('mrd', 'ef02f536-d59d-4f80-a069-304c4d1bcc28')
+        import overlay
+        overlay.add_card_border(coord, img)
         cv2.imshow("mtg noised", img)
         cv2.waitKey(0)
 
