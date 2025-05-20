@@ -239,11 +239,29 @@ def get_noised_mtg_in_background(exp_code: str, illustration_id: str) -> (Dict[s
     return data, background
 
 
+def noised_mtg_in_background_to_mtg(data: Dict[str, int], img: cv2.typing.MatLike) -> cv2.typing.MatLike:
+    x0 = data['x0']
+    x1 = data['x1']
+    x2 = data['x2']
+    x3 = data['x3']
+    y0 = data['y0']
+    y1 = data['y1']
+    y2 = data['y2']
+    y3 = data['y3']
+    dst_pts = np.float32([[x0, y0], [x1, y1], [x3, y3], [x2, y2]])
+    src_pts = np.float32([[0, 0], [488, 0], [0, 680], [488, 680]])
+    m = cv2.getPerspectiveTransform(dst_pts, src_pts)
+    mtg = cv2.warpPerspective(img, m, (488, 680))
+    return mtg
+
+
 if __name__ == '__main__':
     for a in range(100):
         coord, img = get_noised_mtg_in_background('mrd', 'ef02f536-d59d-4f80-a069-304c4d1bcc28')
         import overlay
-        overlay.add_card_border(coord, img)
-        cv2.imshow("mtg noised", img)
+        red = overlay.add_card_border(coord, img)
+        cv2.imshow("mtg noised", red)
+        mtg = noised_mtg_in_background_to_mtg(coord, img)
+        cv2.imshow("mtg unoised", mtg)
         cv2.waitKey(0)
 
