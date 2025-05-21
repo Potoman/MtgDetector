@@ -260,8 +260,8 @@ if __name__ == '__main__':
         coord, img = get_noised_mtg_in_background('mrd', 'ef02f536-d59d-4f80-a069-304c4d1bcc28')
         import overlay
         red = overlay.add_card_border(coord, img)
-        cv2.imshow("mtg noised", red)
+        cv2.imshow("mtg noised", cv2.cvtColor(red, cv2.COLOR_RGBA2BGR))
         mtg = noised_mtg_in_background_to_mtg(coord, img)
-        cv2.imshow("mtg unoised", mtg)
+        cv2.imshow("mtg unoised", cv2.cvtColor(img, cv2.COLOR_RGBA2BGR))
         cv2.waitKey(0)
 
