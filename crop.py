@@ -150,6 +150,7 @@ def get_rgb_image(exp_code: str, illustration_id: str) -> cv2.typing.MatLike:
     image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
     return cv2.resize(image, (488, 680), interpolation=cv2.INTER_LINEAR)
 
+
 def get_rgba_image(exp_code: str, illustration_id: str) -> cv2.typing.MatLike:
     """
 
