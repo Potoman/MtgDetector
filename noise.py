@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 import matplotlib.pyplot as plt
 import random
+import card
 import crop
 import os
 from typing import Dict
@@ -257,7 +258,7 @@ def noised_mtg_in_background_to_mtg(data: Dict[str, int], img: cv2.typing.MatLik
 
 if __name__ == '__main__':
     for a in range(100):
-        coord, img = get_noised_mtg_in_background('mrd', 'ef02f536-d59d-4f80-a069-304c4d1bcc28')
+        coord, img = get_noised_mtg_in_background('mrd', card.get_illustration_id_random('mrd'))
         import overlay
         red = overlay.add_card_border(coord, img)
         cv2.imshow("mtg noised", cv2.cvtColor(red, cv2.COLOR_RGBA2BGR))
