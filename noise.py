@@ -188,7 +188,7 @@ def show_noise():
 
 
 def get_noised_mtg(exp_code: str, illustration_id: str) -> (Dict[str, int], cv2.typing.MatLike):
-    mtg = crop.get_rgba_image(exp_code, illustration_id)
+    mtg = crop.get_bgra_image(exp_code, illustration_id)
     w = 488
     h = 680
     x0 = random.randint(0, 50)
@@ -221,7 +221,7 @@ def get_noised_mtg_in_background(exp_code: str, illustration_id: str) -> (Dict[s
         if os.path.exists(background_path):
             background = cv2.imread(background_path)
     background = cv2.resize(background, (800, 800), interpolation=cv2.INTER_LINEAR)
-    background = cv2.cvtColor(background, cv2.COLOR_BGR2RGBA)
+    background = cv2.cvtColor(background, cv2.COLOR_BGR2BGRA)
     data, mtg = get_noised_mtg(exp_code, illustration_id)
     offset_x = random.randint((800 - 488) // 4, ((800 - 488) * 3) // 4)
     offset_y = random.randint((800 - 680) // 4, ((800 - 680) * 3) // 4)
@@ -261,8 +261,10 @@ if __name__ == '__main__':
         coord, img = get_noised_mtg_in_background('mrd', card.get_illustration_id_random('mrd'))
         import overlay
         red = overlay.add_card_border(coord, img)
-        cv2.imshow("mtg noised", cv2.cvtColor(red, cv2.COLOR_RGBA2BGR))
+        red_bgr = cv2.cvtColor(red, cv2.COLOR_BGRA2BGR)
+        cv2.imshow("mtg noised", red_bgr)
         mtg = noised_mtg_in_background_to_mtg(coord, img)
-        cv2.imshow("mtg unoised", cv2.cvtColor(img, cv2.COLOR_RGBA2BGR))
+        mtg_bgr = cv2.cvtColor(mtg, cv2.COLOR_BGRA2BGR)
+        cv2.imshow("mtg unoised", mtg_bgr)
         cv2.waitKey(0)
 

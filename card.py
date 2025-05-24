@@ -33,8 +33,8 @@ def get_illustration_id_random(exp_code: str):
     return random.choice(get_illustrations_ids(exp_code))
 
 
-def get_argb_random(exp_code: str):
-    return crop.get_rgba_image(exp_code, get_illustration_id_random(exp_code))
+def get_bgra_random(exp_code: str):
+    return crop.get_bgra_image(exp_code, get_illustration_id_random(exp_code))
 
 
 def webcam_to_canny():

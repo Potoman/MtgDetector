@@ -151,7 +151,7 @@ def get_rgb_image(exp_code: str, illustration_id: str) -> cv2.typing.MatLike:
     return cv2.resize(image, (488, 680), interpolation=cv2.INTER_LINEAR)
 
 
-def get_rgba_image(exp_code: str, illustration_id: str) -> cv2.typing.MatLike:
+def get_bgra_image(exp_code: str, illustration_id: str) -> cv2.typing.MatLike:
     """
 
     :param exp_code:
@@ -160,7 +160,7 @@ def get_rgba_image(exp_code: str, illustration_id: str) -> cv2.typing.MatLike:
     """
     image = cv2.imread(_get_image_path(exp_code, illustration_id))
     image = cv2.resize(image, (488, 680), interpolation=cv2.INTER_LINEAR)
-    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGBA)
+    image = cv2.cvtColor(image, cv2.COLOR_BGR2BGRA)
 
     # We delete the white top-left corner
     mtg_roi = image[0:20, 0:20]
