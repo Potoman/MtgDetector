@@ -130,3 +130,8 @@ def pass_canny(image):
         cv2.line(original, (x1, x2), (y1, y2), (0, 255, 0), 3)
 
     return original
+
+
+if __name__ == '__main__':
+    train_exp()
+    pass
