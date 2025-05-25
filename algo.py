@@ -1,9 +1,7 @@
 import json
 import cv2
 import tensorflow as tf
-#from tensorflow.keras import layers, models
 import numpy as np
-from PIL import Image
 import crop
 
 def train_exp():

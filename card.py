@@ -1,4 +1,3 @@
-from ultralytics import YOLO
 import cv2
 import algo
 import crop
@@ -67,6 +66,7 @@ def webcam_to_canny():
 
 
 def webcam_to_yolo():
+    from ultralytics import YOLO
     model = YOLO("yolov8s.pt")
 
     cap = cv2.VideoCapture(0)
