@@ -119,6 +119,14 @@ if __name__ == '__main__':
     pass
 
 
-
+# 100/100 ━━━━━━━━━━━━━━━━━━━━ 0s 19ms/step - loss: 0.0335 - mae: 0.1664
+# 🚨 Current accuracy None...
+# 100/100 ━━━━━━━━━━━━━━━━━━━━ 2s 19ms/step - loss: 0.0335 - mae: 0.1664
+# Fit : 39.22718358039856
+# Step : (99)
+# [0.24, 0.775, 0.77, 0.2075, 0.075, 0.06, 0.86875, 0.8775]
+# 1/1 ━━━━━━━━━━━━━━━━━━━━ 1s 642ms/step
+# [0. 1. 1. 0. 0. 0. 1. 1.]
+# (venvwsl) potoman@DESKTOP-MIVQCKB:/mnt/c/Documents and Settings/Maxime/Documents/work/mtg$
 
 
