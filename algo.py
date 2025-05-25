@@ -4,6 +4,7 @@ import tensorflow as tf
 import numpy as np
 import crop
 
+
 def train_exp():
 
     # Parameters

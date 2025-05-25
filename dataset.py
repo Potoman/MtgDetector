@@ -25,4 +25,3 @@ def generate_data_set(count) -> tf.data.Dataset:
 if __name__ == '__main__':
     generate_data_set(10)
     print("pass")
-
