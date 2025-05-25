@@ -13,7 +13,7 @@ if gpus:
     except RuntimeError as e:
         print(e)
 
-def build_card_corner_model(input_shape=(400, 400, 3)):
+def build_card_corner_model(input_shape=(400, 400, 1)):
     model = tf.keras.models.Sequential([
         tf.keras.layers.Input(shape=input_shape),
 
@@ -73,7 +73,7 @@ if __name__ == '__main__':
 
         print("Prepare dataset...")
         start = time.time()
-        ds = dataset.generate_data_set(400)
+        ds = dataset.generate_gray_dataset(400)
         end = time.time()
         print("Prepare dataset : " + str(end - start))
 
