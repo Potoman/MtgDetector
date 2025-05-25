@@ -68,18 +68,20 @@ if __name__ == '__main__':
             #     print(f"\n🚨 Target accuracy {self.target_acc} reached. Stopping training.")
             #     self.model.stop_training = True
 
-    for step in range(100):
+    start_all = time.time()
+    for step in range(10):
         print("Step... (" + str(step) + ")")
+        start_step = time.time()
 
         print("Prepare dataset...")
         start = time.time()
-        ds = dataset.generate_gray_dataset(400)
+        ds = dataset.generate_gray_dataset(500)
         end = time.time()
         print("Prepare dataset : " + str(end - start))
 
         # print("Suffle...")
         # start = time.time()
-        ds = ds.batch(4) #.prefetch(tf.data.AUTOTUNE)
+        ds = ds.batch(1) #.prefetch(tf.data.AUTOTUNE)
         # end = time.time()
         # print("Suffle : " + str(end - start))
 
@@ -93,15 +95,35 @@ if __name__ == '__main__':
 
         del ds
         gc.collect()
+        stop_step = time.time()
+        print("Step time : (" + str(stop_step - start_step) + ")")
 
-    # 74 secondes for 1 epochs of 100 (batch 4)
+    end_all = time.time()
+    print("All time : (" + str(end_all - start_all) + ")")
 
-    image, keypoints = dataset.get_image_and_keypoint('mrd')
+    image, keypoints, bgr_image = dataset.get_norm_and_bgr_image_and_keypoint('mrd')
     print(keypoints)
 
     input_tensor = tf.expand_dims(image, axis=0)
     prediction = model.predict(input_tensor)[0]  # Shape: (9,)
     print(prediction)
+
+    data = {}
+    data['x0'] = int(prediction[0] * 400)
+    data['x1'] = int(prediction[1] * 400)
+    data['x2'] = int(prediction[2] * 400)
+    data['x3'] = int(prediction[3] * 400)
+    data['y0'] = int(prediction[4] * 400)
+    data['y1'] = int(prediction[5] * 400)
+    data['y2'] = int(prediction[6] * 400)
+    data['y3'] = int(prediction[7] * 400)
+    import overlay
+    red = overlay.add_card_border(data, bgr_image)
+    import cv2
+    cv2.imwrite('input_image.png', bgr_image)
+    cv2.imwrite('output_image.png', red)
+
+
     # corners_norm = prediction[1:]
     # presence = prediction[0]
     # img_bgr = image * 255.0
