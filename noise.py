@@ -237,7 +237,8 @@ def get_noised_mtg_in_background(exp_code: str, illustration_id: str) -> (Dict[s
     data['y1'] = offset_y + data['y1']
     data['y2'] = offset_y + data['y2']
     data['y3'] = offset_y + data['y3']
-    return data, background
+    background_bgr = cv2.cvtColor(background, cv2.COLOR_BGRA2BGR)
+    return data, background_bgr
 
 
 def noised_mtg_in_background_to_mtg(data: Dict[str, int], img: cv2.typing.MatLike) -> cv2.typing.MatLike:
@@ -261,10 +262,8 @@ if __name__ == '__main__':
         coord, img = get_noised_mtg_in_background('mrd', card.get_illustration_id_random('mrd'))
         import overlay
         red = overlay.add_card_border(coord, img)
-        red_bgr = cv2.cvtColor(red, cv2.COLOR_BGRA2BGR)
-        cv2.imshow("mtg noised", red_bgr)
+        cv2.imshow("mtg noised", red)
         mtg = noised_mtg_in_background_to_mtg(coord, img)
-        mtg_bgr = cv2.cvtColor(mtg, cv2.COLOR_BGRA2BGR)
-        cv2.imshow("mtg unoised", mtg_bgr)
+        cv2.imshow("mtg unoised", mtg)
         cv2.waitKey(0)
 

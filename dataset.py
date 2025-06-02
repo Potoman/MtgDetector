@@ -37,8 +37,7 @@ def generate_gray_dataset(exp_code: str, count: int) -> tf.data.Dataset:
 
 
 def get_image_and_keypoint(exp_code: str):
-    data, background_rgba = noise.get_noised_mtg_in_background(exp_code, card.get_illustration_id_random(exp_code))
-    background_bgr = cv2.cvtColor(background_rgba, cv2.COLOR_RGBA2BGR)
+    data, background_bgr = noise.get_noised_mtg_in_background(exp_code, card.get_illustration_id_random(exp_code))
     background_bgr = cv2.resize(background_bgr, (400, 400), interpolation=cv2.INTER_LINEAR)
     img_train = background_bgr / 255.0
     label_train = [data['x0'] / 800.0,
@@ -53,10 +52,10 @@ def get_image_and_keypoint(exp_code: str):
 
 
 def get_norm_image_and_keypoint(exp_code: str):
-    data, background_rgba = noise.get_noised_mtg_in_background(exp_code, card.get_illustration_id_random(exp_code))
-    background_bgr = cv2.cvtColor(background_rgba, cv2.COLOR_BGRA2GRAY)
-    background_bgr = cv2.resize(background_bgr, (400, 400), interpolation=cv2.INTER_LINEAR)
-    img_train = background_bgr / 255.0
+    data, background_bgr = noise.get_noised_mtg_in_background(exp_code, card.get_illustration_id_random(exp_code))
+    background_gray = cv2.cvtColor(background_bgr, cv2.COLOR_BGRA2GRAY)
+    background_gray = cv2.resize(background_gray, (400, 400), interpolation=cv2.INTER_LINEAR)
+    img_train = background_gray / 255.0
     label_train = [data['x0'] / 800.0,
                    data['x1'] / 800.0,
                    data['x2'] / 800.0,
@@ -69,9 +68,8 @@ def get_norm_image_and_keypoint(exp_code: str):
 
 
 def get_norm_and_bgr_image_and_keypoint(exp_code: str):
-    data, background_rgba = noise.get_noised_mtg_in_background(exp_code, card.get_illustration_id_random(exp_code))
+    data, background_bgr = noise.get_noised_mtg_in_background(exp_code, card.get_illustration_id_random(exp_code))
 
-    background_bgr = cv2.cvtColor(background_rgba, cv2.COLOR_BGRA2BGR)
     background_bgr = cv2.resize(background_bgr, (400, 400), interpolation=cv2.INTER_LINEAR)
 
     background_gray = cv2.cvtColor(background_bgr, cv2.COLOR_BGR2GRAY)
