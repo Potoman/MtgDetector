@@ -50,11 +50,10 @@ def custom_loss(y_true, y_pred):
     return keypoint_loss + 0.5 * presence_loss
 
 
-if __name__ == '__main__':
-
+def generate_h5():
     model = build_card_corner_model()
     #model.compile(optimizer='adam', loss=custom_loss, metrics=['mae'])
-    model.compile(optimizer='adam', loss='mse')
+    model.compile(optimizer='adam', loss=tf.keras.losses.MeanSquaredError())
 
     class StopAtAccuracy(tf.keras.callbacks.Callback):
         def __init__(self, target_acc: float):
@@ -81,7 +80,7 @@ if __name__ == '__main__':
 
         # print("Suffle...")
         # start = time.time()
-        ds = ds.batch(1) #.prefetch(tf.data.AUTOTUNE)
+        ds = ds.batch(4) #.prefetch(tf.data.AUTOTUNE)
         # end = time.time()
         # print("Suffle : " + str(end - start))
 
@@ -101,10 +100,16 @@ if __name__ == '__main__':
     end_all = time.time()
     print("All time : (" + str(end_all - start_all) + ")")
 
-    image, keypoints, bgr_image = dataset.get_norm_and_bgr_image_and_keypoint('mrd')
+    model.save('model_border_detector.h5')
+
+    return model
+
+
+def predict_card(model):
+    norm_image, keypoints, bgr_image = dataset.get_norm_and_bgr_image_and_keypoint('mrd')
     print(keypoints)
 
-    input_tensor = tf.expand_dims(image, axis=0)
+    input_tensor = tf.expand_dims(norm_image, axis=0)
     prediction = model.predict(input_tensor)[0]  # Shape: (9,)
     print(prediction)
 
@@ -139,6 +144,16 @@ if __name__ == '__main__':
     # import overlay
     # red = overlay.add_card_border(data, img_bgr)
     pass
+
+
+def load_border_detection_model():
+    model = tf.keras.models.load_model('model_border_detector.h5')
+    return model
+
+if __name__ == '__main__':
+    #generate_h5()
+    model = load_border_detection_model()
+    predict_card(model)
 
 
 # 100/100 ━━━━━━━━━━━━━━━━━━━━ 0s 19ms/step - loss: 0.0335 - mae: 0.1664
