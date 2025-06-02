@@ -74,7 +74,7 @@ def generate_h5():
 
         print("Prepare dataset...")
         start = time.time()
-        ds = dataset.generate_gray_dataset(500)
+        ds = dataset.generate_gray_dataset("mrd", 500)
         end = time.time()
         print("Prepare dataset : " + str(end - start))
 

@@ -22,11 +22,9 @@ def generate_data_set(count) -> tf.data.Dataset:
     return tf.data.Dataset.from_tensor_slices((imgs_train, labels_train))
 
 
-def generate_gray_dataset(count) -> tf.data.Dataset:
+def generate_gray_dataset(exp_code: str, count: int) -> tf.data.Dataset:
     imgs_train = np.zeros((count, 400, 400, 1), dtype=np.float32)
     labels_train = np.zeros((count, 8), dtype=np.float32)
-
-    exp_code: str = "mrd"
 
     index = 0
     for index in tqdm.tqdm(range(count)):
