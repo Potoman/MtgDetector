@@ -74,8 +74,7 @@ def get_norm_and_bgr_image_and_keypoint(exp_code: str):
     background_bgr = cv2.cvtColor(background_rgba, cv2.COLOR_BGRA2BGR)
     background_bgr = cv2.resize(background_bgr, (400, 400), interpolation=cv2.INTER_LINEAR)
 
-    background_gray = cv2.cvtColor(background_rgba, cv2.COLOR_BGRA2GRAY)
-    background_gray = cv2.resize(background_gray, (400, 400), interpolation=cv2.INTER_LINEAR)
+    background_gray = cv2.cvtColor(background_bgr, cv2.COLOR_BGR2GRAY)
     img_train = background_gray / 255.0
     label_train = [data['x0'] / 800.0,
                    data['x1'] / 800.0,
