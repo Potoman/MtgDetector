@@ -1,4 +1,6 @@
+import cv2
 import gc
+import overlay
 import time
 
 import tensorflow as tf
@@ -105,14 +107,19 @@ def generate_h5():
     return model
 
 
-def predict_card(model):
-    norm_image, keypoints, bgr_image = dataset.get_norm_and_bgr_image_and_keypoint('mrd')
+def predict_random_card(model):
+    norm_image, keypoints, bgr_image = dataset.get_norm_and_bgr_image_and_keypoint('znr')
     print(keypoints)
+    prediction = get_prediction(model, norm_image)
+    red = overlay.add_card_border(prediction, bgr_image)
+    cv2.imwrite('input_image.png', bgr_image)
+    cv2.imwrite('output_image.png', red)
 
-    input_tensor = tf.expand_dims(norm_image, axis=0)
+
+def get_prediction(model, image_norm):
+    input_tensor = tf.expand_dims(image_norm, axis=0)
     prediction = model.predict(input_tensor)[0]  # Shape: (9,)
     print(prediction)
-
     data = {}
     data['x0'] = int(prediction[0] * 400)
     data['x1'] = int(prediction[1] * 400)
@@ -122,28 +129,7 @@ def predict_card(model):
     data['y1'] = int(prediction[5] * 400)
     data['y2'] = int(prediction[6] * 400)
     data['y3'] = int(prediction[7] * 400)
-    import overlay
-    red = overlay.add_card_border(data, bgr_image)
-    import cv2
-    cv2.imwrite('input_image.png', bgr_image)
-    cv2.imwrite('output_image.png', red)
-
-
-    # corners_norm = prediction[1:]
-    # presence = prediction[0]
-    # img_bgr = image * 255.0
-    # data = {}
-    # data['x0'] = prediction[0] * 400
-    # data['x1'] = prediction[1] * 400
-    # data['x2'] = prediction[2] * 400
-    # data['x3'] = prediction[3] * 400
-    # data['y0'] = prediction[4] * 400
-    # data['y1'] = prediction[5] * 400
-    # data['y2'] = prediction[6] * 400
-    # data['y3'] = prediction[7] * 400
-    # import overlay
-    # red = overlay.add_card_border(data, img_bgr)
-    pass
+    return data
 
 
 def load_border_detection_model():
@@ -151,9 +137,9 @@ def load_border_detection_model():
     return model
 
 if __name__ == '__main__':
-    #generate_h5()
-    model = load_border_detection_model()
-    predict_card(model)
+    generate_h5()
+    #model = load_border_detection_model()
+    #predict_random_card(model)
 
 
 # 100/100 ━━━━━━━━━━━━━━━━━━━━ 0s 19ms/step - loss: 0.0335 - mae: 0.1664
