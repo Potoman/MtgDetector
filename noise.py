@@ -191,14 +191,16 @@ def get_noised_mtg(exp_code: str, illustration_id: str) -> (Dict[str, int], cv2.
     mtg = crop.get_bgra_image(exp_code, illustration_id)
     w = 488
     h = 680
-    x0 = random.randint(0, 50)
-    y0 = random.randint(0, 50)
-    x1 = w - random.randint(0, 50)
-    y1 = random.randint(0, 50)
-    x2 = w - random.randint(0, 50)
-    y2 = h - random.randint(0, 50)
-    x3 = random.randint(0, 50)
-    y3 = h - random.randint(0, 50)
+    pixel_zoom = random.randint(0, 100)
+    pixel_distorsion = 50
+    x0 = int(pixel_zoom + random.randint(0, pixel_distorsion))
+    y0 = int(pixel_zoom + random.randint(0, pixel_distorsion))
+    x1 = w - int(pixel_zoom + random.randint(0, pixel_distorsion))
+    y1 = int(pixel_zoom + random.randint(0, pixel_distorsion))
+    x2 = w - int(pixel_zoom + random.randint(0, pixel_distorsion))
+    y2 = h - int(pixel_zoom + random.randint(0, pixel_distorsion))
+    x3 = int(pixel_zoom + random.randint(0, pixel_distorsion))
+    y3 = h - int(pixel_zoom + random.randint(0, pixel_distorsion))
     src_pts = np.float32([[0, 0], [w, 0], [0, h], [w, h]])
     dst_pts = np.float32([[x0, y0], [x1, y1], [x3, y3], [x2, y2]])
     m = cv2.getPerspectiveTransform(src_pts, dst_pts)
@@ -238,8 +240,16 @@ def get_noised_mtg_in_background(exp_code: str, illustration_id: str) -> (Dict[s
     data['y2'] = offset_y + data['y2']
     data['y3'] = offset_y + data['y3']
     background_bgr = cv2.cvtColor(background, cv2.COLOR_BGRA2BGR)
-    kernel = random.choice(range(3, 12, 2))
+    kernel = random.choice(range(7, 12, 2))
     background_bgr = cv2.GaussianBlur(background_bgr, (kernel, kernel), 0)
+    percent_brightness = random.randint(30, 70)
+    if percent_brightness < 50:
+        alpha = percent_brightness / 50.0
+        beta = 0.0
+    else:
+        alpha = 1.0
+        beta = 255.0 * (percent_brightness - 50) / 50.0
+    background_bgr = cv2.convertScaleAbs(background_bgr, alpha=alpha, beta=beta)
     return data, background_bgr
 
 
