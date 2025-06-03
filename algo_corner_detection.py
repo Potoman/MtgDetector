@@ -70,7 +70,7 @@ def generate_h5():
             #     self.model.stop_training = True
 
     start_all = time.time()
-    for step in range(10):
+    for step in range(50):
         print("Step... (" + str(step) + ")")
         start_step = time.time()
 
@@ -88,7 +88,7 @@ def generate_h5():
 
         print("Fit...")
         start = time.time()
-        model.fit(ds, epochs=20, callbacks=[StopAtAccuracy(0.97)])
+        model.fit(ds, epochs=4, callbacks=[StopAtAccuracy(0.97)])
         end = time.time()
         print("Fit : " + str(end - start))
 
