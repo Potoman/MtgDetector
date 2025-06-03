@@ -238,6 +238,8 @@ def get_noised_mtg_in_background(exp_code: str, illustration_id: str) -> (Dict[s
     data['y2'] = offset_y + data['y2']
     data['y3'] = offset_y + data['y3']
     background_bgr = cv2.cvtColor(background, cv2.COLOR_BGRA2BGR)
+    kernel = random.choice(range(3, 12, 2))
+    background_bgr = cv2.GaussianBlur(background_bgr, (kernel, kernel), 0)
     return data, background_bgr
 
 
