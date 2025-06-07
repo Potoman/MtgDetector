@@ -241,9 +241,17 @@ def get_noised_mtg_in_background(exp_code: str, illustration_id: str) -> (Dict[s
     data['y3'] = int(data['y3'] * zoom)
 
     # Place the card randomly in the background with a margin of 25 mixel :
-    margin = 25  # Margin of 25px where the card will not be present.
-    offset_x = random.randint(25, 25 + (800 - (margin * 2) - new_width))
-    offset_y = random.randint(25, 25 + (800 - (margin * 2) - new_height))
+    # Margin of 25px where the card will not be present.
+    margin = 15
+    nb_pixel = (800 - (margin * 2) - new_width) * (800 - (margin * 2) - new_height)
+    # Do it in uniform way by picking one random value
+    pixel_position = random.randint(0, nb_pixel)
+    offset_y = int(float(pixel_position) / (800 - (margin * 2) - new_width))
+    offset_x = pixel_position - offset_y * (800 - (margin * 2) - new_width)
+    # Add the margin
+    offset_x = offset_x + margin
+    offset_y = offset_y + margin
+    # Appli the card
     roi = background[offset_y:offset_y + new_height, offset_x:offset_x + new_width]
     mtg_mask = mtg[:, :, 3] != 0
     roi[mtg_mask] = mtg[mtg_mask]
