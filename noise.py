@@ -191,16 +191,16 @@ def get_noised_mtg(exp_code: str, illustration_id: str) -> (Dict[str, int], cv2.
     mtg = crop.get_bgra_image(exp_code, illustration_id)
     w = 488
     h = 680
-    pixel_zoom = random.randint(0, 100)
+    # Add distorsion :
     pixel_distorsion = 50
-    x0 = int(pixel_zoom + random.randint(0, pixel_distorsion))
-    y0 = int(pixel_zoom + random.randint(0, pixel_distorsion))
-    x1 = w - int(pixel_zoom + random.randint(0, pixel_distorsion))
-    y1 = int(pixel_zoom + random.randint(0, pixel_distorsion))
-    x2 = w - int(pixel_zoom + random.randint(0, pixel_distorsion))
-    y2 = h - int(pixel_zoom + random.randint(0, pixel_distorsion))
-    x3 = int(pixel_zoom + random.randint(0, pixel_distorsion))
-    y3 = h - int(pixel_zoom + random.randint(0, pixel_distorsion))
+    x0 = int(random.randint(0, pixel_distorsion))
+    y0 = int(random.randint(0, pixel_distorsion))
+    x1 = w - int(random.randint(0, pixel_distorsion))
+    y1 = int(random.randint(0, pixel_distorsion))
+    x2 = w - int(random.randint(0, pixel_distorsion))
+    y2 = h - int(random.randint(0, pixel_distorsion))
+    x3 = int(random.randint(0, pixel_distorsion))
+    y3 = h - int(random.randint(0, pixel_distorsion))
     src_pts = np.float32([[0, 0], [w, 0], [0, h], [w, h]])
     dst_pts = np.float32([[x0, y0], [x1, y1], [x3, y3], [x2, y2]])
     m = cv2.getPerspectiveTransform(src_pts, dst_pts)
@@ -225,12 +225,29 @@ def get_noised_mtg_in_background(exp_code: str, illustration_id: str) -> (Dict[s
     background = cv2.resize(background, (800, 800), interpolation=cv2.INTER_LINEAR)
     background = cv2.cvtColor(background, cv2.COLOR_BGR2BGRA)
     data, mtg = get_noised_mtg(exp_code, illustration_id)
-    offset_x = random.randint((800 - 488) // 4, ((800 - 488) * 3) // 4)
-    offset_y = random.randint((800 - 680) // 4, ((800 - 680) * 3) // 4)
-    roi = background[offset_y:offset_y + 680, offset_x:offset_x + 488]
+
+    # Zoom here :
+    zoom = 0.4 + random.random() * 0.6  # Random value from 0.4 to 1.0.
+    new_width = int(488.0 * zoom)
+    new_height = int(680.0 * zoom)
+    mtg = cv2.resize(mtg, (new_width, new_height), interpolation=cv2.INTER_LINEAR)
+    data['x0'] = int(data['x0'] * zoom)
+    data['x1'] = int(data['x1'] * zoom)
+    data['x2'] = int(data['x2'] * zoom)
+    data['x3'] = int(data['x3'] * zoom)
+    data['y0'] = int(data['y0'] * zoom)
+    data['y1'] = int(data['y1'] * zoom)
+    data['y2'] = int(data['y2'] * zoom)
+    data['y3'] = int(data['y3'] * zoom)
+
+    # Place the card randomly in the background with a margin of 25 mixel :
+    margin = 25  # Margin of 25px where the card will not be present.
+    offset_x = random.randint(25, 25 + (800 - (margin * 2) - new_width))
+    offset_y = random.randint(25, 25 + (800 - (margin * 2) - new_height))
+    roi = background[offset_y:offset_y + new_height, offset_x:offset_x + new_width]
     mtg_mask = mtg[:, :, 3] != 0
     roi[mtg_mask] = mtg[mtg_mask]
-    background[offset_y:offset_y + 680, offset_x:offset_x + 488] = roi
+    background[offset_y:offset_y + new_height, offset_x:offset_x + new_width] = roi
     data['x0'] = offset_x + data['x0']
     data['x1'] = offset_x + data['x1']
     data['x2'] = offset_x + data['x2']
@@ -240,8 +257,12 @@ def get_noised_mtg_in_background(exp_code: str, illustration_id: str) -> (Dict[s
     data['y2'] = offset_y + data['y2']
     data['y3'] = offset_y + data['y3']
     background_bgr = cv2.cvtColor(background, cv2.COLOR_BGRA2BGR)
+
+    # Add blur :
     kernel = random.choice(range(7, 12, 2))
     background_bgr = cv2.GaussianBlur(background_bgr, (kernel, kernel), 0)
+
+    # Add brightness :
     percent_brightness = random.randint(30, 70)
     if percent_brightness < 50:
         alpha = percent_brightness / 50.0
