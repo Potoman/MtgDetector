@@ -224,7 +224,15 @@ def get_noised_mtg_in_background(exp_code: str, illustration_id: str) -> (Dict[s
             background = cv2.imread(background_path)
     background = cv2.resize(background, (800, 800), interpolation=cv2.INTER_LINEAR)
     background = cv2.cvtColor(background, cv2.COLOR_BGR2BGRA)
+
+    # Add blur :
+    kernel = random.choice(range(5, 12, 2))
+    background = cv2.GaussianBlur(background, (kernel, kernel), 0)
+
     data, mtg = get_noised_mtg(exp_code, illustration_id)
+    # Add blur :
+    kernel = random.choice(range(1, 12, 2))
+    mtg = cv2.GaussianBlur(mtg, (kernel, kernel), 0)
 
     # Zoom here :
     zoom = 0.4 + random.random() * 0.6  # Random value from 0.4 to 1.0.
@@ -266,9 +274,6 @@ def get_noised_mtg_in_background(exp_code: str, illustration_id: str) -> (Dict[s
     data['y3'] = offset_y + data['y3']
     background_bgr = cv2.cvtColor(background, cv2.COLOR_BGRA2BGR)
 
-    # Add blur :
-    kernel = random.choice(range(7, 12, 2))
-    background_bgr = cv2.GaussianBlur(background_bgr, (kernel, kernel), 0)
 
     # Add brightness :
     percent_brightness = random.randint(30, 70)
