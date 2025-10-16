@@ -105,14 +105,17 @@ def generate_h5():
             #     print(f"\n🚨 Target accuracy {self.target_acc} reached. Stopping training.")
             #     self.model.stop_training = True
 
+    count_step = 2
+    size_dataset = 100
+    count_epoch = 1
     start_all = time.time()
-    for step in range(50):
+    for step in range(count_step):
         print("Step... (" + str(step) + ")")
         start_step = time.time()
 
         print("Prepare dataset...")
         start = time.time()
-        ds = dataset.generate_gray_dataset("mrd", 500)
+        ds = dataset.generate_gray_dataset("mrd", size_dataset)
         end = time.time()
         print("Prepare dataset : " + str(end - start))
 
