@@ -151,7 +151,7 @@ def get_rgb_image(exp_code: str, illustration_id: str) -> cv2.typing.MatLike:
     return cv2.resize(image, (488, 680), interpolation=cv2.INTER_LINEAR)
 
 
-def get_bgra_image(exp_code: str, illustration_id: str) -> cv2.typing.MatLike:
+def get_bgra_image(exp_code: str, illustration_id: str, height: int=680 , width: int=488) -> cv2.typing.MatLike:
     """
 
     :param exp_code:
@@ -159,32 +159,34 @@ def get_bgra_image(exp_code: str, illustration_id: str) -> cv2.typing.MatLike:
     :return: a RGB card of size 488x680
     """
     image = cv2.imread(_get_image_path(exp_code, illustration_id))
-    image = cv2.resize(image, (488, 680), interpolation=cv2.INTER_LINEAR)
+    image = cv2.resize(image, (width, height), interpolation=cv2.INTER_LINEAR)
     image = cv2.cvtColor(image, cv2.COLOR_BGR2BGRA)
 
+    black_radius = 20
+
     # We delete the white top-left corner
-    mtg_roi = image[0:20, 0:20]
+    mtg_roi = image[0:black_radius, 0:black_radius]
     mask = np.all(mtg_roi > 125, axis=2)
     mtg_roi[mask] = (0, 0, 0, 0)
-    image[0:20, 0:20] = mtg_roi
+    image[0:black_radius, 0:black_radius] = mtg_roi
 
     # We delete the white bottom-left corner
-    mtg_roi = image[660:680, 0:20]
+    mtg_roi = image[(height - black_radius):height, 0:black_radius]
     mask = np.all(mtg_roi > 125, axis=2)
     mtg_roi[mask] = (0, 0, 0, 0)
-    image[660:680, 0:20] = mtg_roi
+    image[(height - black_radius):height, 0:black_radius] = mtg_roi
 
     # We delete the white top-right corner
-    mtg_roi = image[0:20, 468:488]
+    mtg_roi = image[0:black_radius, 468:width]
     mask = np.all(mtg_roi > 125, axis=2)
     mtg_roi[mask] = (0, 0, 0, 0)
-    image[0:20, 468:488] = mtg_roi
+    image[0:black_radius, (width - black_radius):width] = mtg_roi
 
     # We delete the white bottom-right corner
-    mtg_roi = image[660:680, 468:488]
+    mtg_roi = image[(height - black_radius):height, (width - black_radius):width]
     mask = np.all(mtg_roi > 125, axis=2)
     mtg_roi[mask] = (0, 0, 0, 0)
-    image[660:680, 468:488] = mtg_roi
+    image[(height - black_radius):height, (width - black_radius):width] = mtg_roi
 
     return image
 
