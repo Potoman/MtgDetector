@@ -1,3 +1,4 @@
+import pathlib
 import card
 import cv2
 import noise
@@ -23,6 +24,24 @@ def generate_data_set(count) -> tf.data.Dataset:
 
 
 def generate_gray_dataset(exp_code: str, count: int) -> tf.data.Dataset:
+    if not hasattr(generate_gray_dataset, "counter"):
+        generate_gray_dataset.counter = {}  # initialize once
+
+    if exp_code in generate_gray_dataset.counter:
+        if count in generate_gray_dataset.counter[exp_code]:
+            id = generate_gray_dataset.counter[exp_code][count]
+        else:
+            id = 0
+            generate_gray_dataset.counter[exp_code][count] = id
+    else:
+        id = 0
+        generate_gray_dataset.counter[exp_code] = {count: id}
+
+    path = pathlib.Path("/mnt/e/dataset/mtg/", exp_code, str(count), f"ds_{id}.ds")
+    if path.exists():
+        generate_gray_dataset.counter[exp_code][count] = id + 1
+        return tf.data.experimental.load(str(path))
+
     imgs_train = np.zeros((count, 400, 400, 1), dtype=np.float32)
     labels_train = np.zeros((count, 8), dtype=np.float32)
 
@@ -33,7 +52,9 @@ def generate_gray_dataset(exp_code: str, count: int) -> tf.data.Dataset:
         labels_train[index] = label_train
         index = index + 1
 
-    return tf.data.Dataset.from_tensor_slices((imgs_train, labels_train))
+    ds = tf.data.Dataset.from_tensor_slices((imgs_train, labels_train))
+    tf.data.experimental.save(dataset=ds, path=str(path))
+    return ds
 
 
 def get_image_and_keypoint(exp_code: str):
