@@ -155,7 +155,7 @@ def generate_h5():
     plt.plot(combined_history['loss'], label='Training loss')
     plt.legend()
     plt.title(f"step : {count_step}; data set size : {size_dataset}; epoch : {count_epoch}")
-    plt.savefig(f"training_s{count_step}_ds{size_dataset}_e{count_epoch}_.png")
+    plt.savefig(f"training_s{count_step}_ds{size_dataset}_e{count_epoch}.png")
     plt.close()
 
     model.save('model_border_detector.keras')
