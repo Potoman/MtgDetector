@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 import matplotlib.pyplot as plt
 import random
+import time
 import card
 import crop
 import os
@@ -39,44 +40,45 @@ def add_speckle_noise(image):
 
 
 
-# # Create a blank image with a gray rectangle (simulate a card)
-# image = np.ones((300, 400), dtype=np.uint8) * 150
-# cv2.rectangle(image, (100, 80), (300, 220), (200), -1)  # A gray "card"
-#
-# # Apply various noise
-# gaussian = add_gaussian_noise(image)
-# salt_pepper = add_salt_pepper_noise(image)
-# poisson = add_poisson_noise(image)
-# speckle = add_speckle_noise(image)
-#
-# # Plot all images
-# titles = ['Original', 'Gaussian', 'Salt & Pepper', 'Poisson', 'Speckle']
-# images = [image, gaussian, salt_pepper, poisson, speckle]
+def print_4_noises():
+    # Create a blank image with a gray rectangle (simulate a card)
+    image = np.ones((300, 400), dtype=np.uint8) * 150
+    cv2.rectangle(image, (100, 80), (300, 220), (200), -1)  # A gray "card"
 
-# plt.figure(figsize=(15, 6))
-# for i in range(5):
-#     plt.subplot(1, 5, i+1)
-#     plt.imshow(images[i], cmap='gray')
-#     plt.title(titles[i])
-#     plt.axis('off')
-# plt.tight_layout()
-# plt.show()
-#
-# cv2.waitKey(0)
-# cv2.destroyAllWindows()
+    # Apply various noise
+    gaussian = add_gaussian_noise(image)
+    salt_pepper = add_salt_pepper_noise(image)
+    poisson = add_poisson_noise(image)
+    speckle = add_speckle_noise(image)
 
-# # Create a blank canvas
-# height, width = 300, 400
-# image = np.zeros((height, width, 3), dtype=np.uint8)
-#
-# # Generate wavy color noise using sine patterns
-# for y in range(height):
-#     for x in range(width):
-#         r = 127 + 127 * np.sin(2 * np.pi * x / 60 + y / 30)
-#         g = 127 + 127 * np.sin(2 * np.pi * y / 40 + x / 20)
-#         b = 127 + 127 * np.sin(2 * np.pi * (x + y) / 80)
-#
-#         image[y, x] = [b, g, r]  # OpenCV uses BGR
+    # Plot all images
+    titles = ['Original', 'Gaussian', 'Salt & Pepper', 'Poisson', 'Speckle']
+    images = [image, gaussian, salt_pepper, poisson, speckle]
+
+    plt.figure(figsize=(15, 6))
+    for i in range(5):
+        plt.subplot(1, 5, i+1)
+        plt.imshow(images[i], cmap='gray')
+        plt.title(titles[i])
+        plt.axis('off')
+    plt.tight_layout()
+    plt.show()
+
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+
+    # Create a blank canvas
+    height, width = 300, 400
+    image = np.zeros((height, width, 3), dtype=np.uint8)
+
+    # Generate wavy color noise using sine patterns
+    for y in range(height):
+        for x in range(width):
+            r = 127 + 127 * np.sin(2 * np.pi * x / 60 + y / 30)
+            g = 127 + 127 * np.sin(2 * np.pi * y / 40 + x / 20)
+            b = 127 + 127 * np.sin(2 * np.pi * (x + y) / 80)
+
+            image[y, x] = [b, g, r]  # OpenCV uses BGR
 
 
 def add_color_wave(image):
@@ -330,12 +332,18 @@ def noised_mtg_in_background_to_mtg(data: Dict[str, int], img: cv2.typing.MatLik
 
 
 if __name__ == '__main__':
-    for a in range(100):
+    t_start = time.time()
+    print(t_start)
+    print_4_noises()
+    for a in range(100000):
         coord, img = get_noised_mtg_in_background('mrd', card.get_illustration_id_random('mrd'))
         import overlay
         red = overlay.add_card_border(coord, img)
         cv2.imshow("mtg noised", red)
-        mtg = noised_mtg_in_background_to_mtg(coord, img)
-        cv2.imshow("mtg unoised", mtg)
+        #mtg = noised_mtg_in_background_to_mtg(coord, img)
+        #cv2.imshow("mtg unoised", mtg)
         cv2.waitKey(0)
-
+    t_end = time.time()
+    print(t_end)
+    print(t_end - t_start)
+    pass
