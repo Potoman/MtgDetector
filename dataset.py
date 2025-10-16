@@ -108,6 +108,7 @@ def get_norm_and_bgr_image_and_keypoint(exp_code: str):
                    data['is_present']]
     return img_train, label_train, background_bgr
 
+
 if __name__ == '__main__':
     generate_data_set(10)
     print("pass")
