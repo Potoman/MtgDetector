@@ -105,6 +105,12 @@ def generate_h5():
             #     print(f"\n🚨 Target accuracy {self.target_acc} reached. Stopping training.")
             #     self.model.stop_training = True
 
+    combined_history = {
+        'coord_mae_when_present': [],
+        'loss': [],
+        'presence_accuracy': []
+    }
+
     count_step = 2
     size_dataset = 100
     count_epoch = 1
@@ -127,7 +133,10 @@ def generate_h5():
 
         print("Fit...")
         start = time.time()
-        model.fit(ds, epochs=count_epoch, callbacks=[StopAtAccuracy(0.97)])
+        history = model.fit(ds, epochs=count_epoch, callbacks=[StopAtAccuracy(0.97)])
+        for key in combined_history:
+            combined_history[key].extend(history.history.get(key, []))
+
         end = time.time()
         print("Fit : " + str(end - start))
 
@@ -140,6 +149,14 @@ def generate_h5():
 
     end_all = time.time()
     print("All time : (" + str(end_all - start_all) + ")")
+
+    import matplotlib.pyplot as plt
+    plt.plot(combined_history['coord_mae_when_present'], label='MAE')
+    plt.plot(combined_history['loss'], label='Training loss')
+    plt.legend()
+    plt.title(f"step : {count_step}; data set size : {size_dataset}; epoch : {count_epoch}")
+    plt.savefig(f"training_s{count_step}_ds{size_dataset}_e{count_epoch}_.png")
+    plt.close()
 
     model.save('model_border_detector.keras')
 
