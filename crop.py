@@ -151,7 +151,7 @@ def get_rgb_image(exp_code: str, illustration_id: str) -> cv2.typing.MatLike:
     return cv2.resize(image, (488, 680), interpolation=cv2.INTER_LINEAR)
 
 
-def get_bgra_image(exp_code: str, illustration_id: str, height: int=680 , width: int=488) -> cv2.typing.MatLike:
+def get_bgra_image(exp_code: str, illustration_id: str, height: int=680, width: int=488) -> cv2.typing.MatLike:
     """
 
     :param exp_code:
