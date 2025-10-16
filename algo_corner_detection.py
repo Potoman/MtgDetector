@@ -138,7 +138,7 @@ def generate_h5():
     end_all = time.time()
     print("All time : (" + str(end_all - start_all) + ")")
 
-    model.save('model_border_detector.h5')
+    model.save('model_border_detector.keras')
 
     return model
 
