@@ -187,104 +187,130 @@ def show_noise():
     cv2.destroyAllWindows()
 
 
-def get_noised_mtg(exp_code: str, illustration_id: str) -> (Dict[str, int], cv2.typing.MatLike):
-    mtg = crop.get_bgra_image(exp_code, illustration_id)
-    w = 488
-    h = 680
+def get_noised_mtg(exp_code: str, illustration_id: str, height: int = 680, width: int = 488) -> (Dict[str, int], cv2.typing.MatLike):
+    mtg = crop.get_bgra_image(exp_code, illustration_id, height, width)
     # Add distorsion :
     pixel_distorsion = 50
     x0 = int(random.randint(0, pixel_distorsion))
     y0 = int(random.randint(0, pixel_distorsion))
-    x1 = w - int(random.randint(0, pixel_distorsion))
+    x1 = width - int(random.randint(0, pixel_distorsion))
     y1 = int(random.randint(0, pixel_distorsion))
-    x2 = w - int(random.randint(0, pixel_distorsion))
-    y2 = h - int(random.randint(0, pixel_distorsion))
+    x2 = width - int(random.randint(0, pixel_distorsion))
+    y2 = height - int(random.randint(0, pixel_distorsion))
     x3 = int(random.randint(0, pixel_distorsion))
-    y3 = h - int(random.randint(0, pixel_distorsion))
-    src_pts = np.float32([[0, 0], [w, 0], [0, h], [w, h]])
+    y3 = height - int(random.randint(0, pixel_distorsion))
+    src_pts = np.float32([[0, 0], [width, 0], [0, height], [width, height]])
     dst_pts = np.float32([[x0, y0], [x1, y1], [x3, y3], [x2, y2]])
     m = cv2.getPerspectiveTransform(src_pts, dst_pts)
-    twisted_image = cv2.warpPerspective(mtg, m, (w, h))
+    twisted_image = cv2.warpPerspective(mtg, m, (width, height))
     return {'x0': x0, 'x1': x1, 'x2': x2, 'x3': x3, 'y0': y0, 'y1': y1, 'y2': y2, 'y3': y3}, twisted_image
 
 
 def get_noised_mtg_in_background(exp_code: str, illustration_id: str) -> (Dict[str, int], cv2.typing.MatLike):
-    backgrounds = {'Bathroom': ('bath', 1300),
-                   'Bedroom': ('bed', 1432),
-                   'Dinning': ('din', 1593),
-                   'Kitchen': ('kitchen', 1360),
-                   'Livingroom': ('living', 1427)}
-    background = None
-    while background is None:
-        folder = random.choice(list(backgrounds.keys()))
-        sub_image = backgrounds[folder]
-        background_path = os.path.join('archive(6)', 'House_Room_Dataset', folder,
-                                       sub_image[0] + '_' + str(random.randint(1, sub_image[1])) + '.jpg')
-        if os.path.exists(background_path):
-            background = cv2.imread(background_path)
-    background = cv2.resize(background, (800, 800), interpolation=cv2.INTER_LINEAR)
-    background = cv2.cvtColor(background, cv2.COLOR_BGR2BGRA)
+    select_background = random.randint(0, 1)
+    if select_background == 0:
+        r = random.randint(0, 255)
+        g = random.randint(0, 255)
+        b = random.randint(0, 255)
+        background = np.zeros((800, 800, 4), dtype=np.uint8)
+        background[:] = [b, g, r, 255]
 
-    # Add blur :
-    kernel = random.choice(range(5, 12, 2))
-    background = cv2.GaussianBlur(background, (kernel, kernel), 0)
-
-    data, mtg = get_noised_mtg(exp_code, illustration_id)
-    # Add blur :
-    kernel = random.choice(range(1, 12, 2))
-    mtg = cv2.GaussianBlur(mtg, (kernel, kernel), 0)
-
-    # Zoom here :
-    zoom = 0.4 + random.random() * 0.6  # Random value from 0.4 to 1.0.
-    new_width = int(488.0 * zoom)
-    new_height = int(680.0 * zoom)
-    mtg = cv2.resize(mtg, (new_width, new_height), interpolation=cv2.INTER_LINEAR)
-    data['x0'] = int(data['x0'] * zoom)
-    data['x1'] = int(data['x1'] * zoom)
-    data['x2'] = int(data['x2'] * zoom)
-    data['x3'] = int(data['x3'] * zoom)
-    data['y0'] = int(data['y0'] * zoom)
-    data['y1'] = int(data['y1'] * zoom)
-    data['y2'] = int(data['y2'] * zoom)
-    data['y3'] = int(data['y3'] * zoom)
-
-    # Place the card randomly in the background with a margin of 25 mixel :
-    # Margin of 25px where the card will not be present.
-    margin = 15
-    nb_pixel = (800 - (margin * 2) - new_width) * (800 - (margin * 2) - new_height)
-    # Do it in uniform way by picking one random value
-    pixel_position = random.randint(0, nb_pixel)
-    offset_y = int(float(pixel_position) / (800 - (margin * 2) - new_width))
-    offset_x = pixel_position - offset_y * (800 - (margin * 2) - new_width)
-    # Add the margin
-    offset_x = offset_x + margin
-    offset_y = offset_y + margin
-    # Appli the card
-    roi = background[offset_y:offset_y + new_height, offset_x:offset_x + new_width]
-    mtg_mask = mtg[:, :, 3] != 0
-    roi[mtg_mask] = mtg[mtg_mask]
-    background[offset_y:offset_y + new_height, offset_x:offset_x + new_width] = roi
-    data['x0'] = offset_x + data['x0']
-    data['x1'] = offset_x + data['x1']
-    data['x2'] = offset_x + data['x2']
-    data['x3'] = offset_x + data['x3']
-    data['y0'] = offset_y + data['y0']
-    data['y1'] = offset_y + data['y1']
-    data['y2'] = offset_y + data['y2']
-    data['y3'] = offset_y + data['y3']
-    background_bgr = cv2.cvtColor(background, cv2.COLOR_BGRA2BGR)
-
-
-    # Add brightness :
-    percent_brightness = random.randint(30, 70)
-    if percent_brightness < 50:
-        alpha = percent_brightness / 50.0
-        beta = 0.0
+        background = add_gaussian_noise(background)
     else:
-        alpha = 1.0
-        beta = 255.0 * (percent_brightness - 50) / 50.0
-    background_bgr = cv2.convertScaleAbs(background_bgr, alpha=alpha, beta=beta)
-    return data, background_bgr
+        backgrounds = {'Bathroom': ('bath', 1300),
+                       'Bedroom': ('bed', 1432),
+                       'Dinning': ('din', 1593),
+                       'Kitchen': ('kitchen', 1360),
+                       'Livingroom': ('living', 1427)}
+        background = None
+        while background is None:
+            folder = random.choice(list(backgrounds.keys()))
+            sub_image = backgrounds[folder]
+            background_path = os.path.join('archive(6)', 'House_Room_Dataset', folder,
+                                           sub_image[0] + '_' + str(random.randint(1, sub_image[1])) + '.jpg')
+            if os.path.exists(background_path):
+                background = cv2.imread(background_path)
+        background = cv2.resize(background, (800, 800), interpolation=cv2.INTER_LINEAR)
+        background = cv2.cvtColor(background, cv2.COLOR_BGR2BGRA)
+
+        # Add blur :
+        kernel = random.choice(range(1, 20, 2))
+        background = cv2.GaussianBlur(background, (kernel, kernel), 0)
+
+    if random.randint(0, 10) < 99:
+        data, mtg = get_noised_mtg(exp_code, illustration_id)
+        # Add blur :
+        kernel = random.choice(range(1, 12, 2))
+        mtg = cv2.GaussianBlur(mtg, (kernel, kernel), 0)
+
+        # Zoom here :
+        min = 0.5
+        zoom = min + random.random() * (1.0 - min)  # Random value from 0.4 to 1.0.
+        new_width = int(488.0 * zoom)
+        new_height = int(680.0 * zoom)
+        mtg = cv2.resize(mtg, (new_width, new_height), interpolation=cv2.INTER_LINEAR)
+        data['x0'] = int(data['x0'] * zoom)
+        data['x1'] = int(data['x1'] * zoom)
+        data['x2'] = int(data['x2'] * zoom)
+        data['x3'] = int(data['x3'] * zoom)
+        data['y0'] = int(data['y0'] * zoom)
+        data['y1'] = int(data['y1'] * zoom)
+        data['y2'] = int(data['y2'] * zoom)
+        data['y3'] = int(data['y3'] * zoom)
+
+        # Place the card randomly in the background with a margin of 25 mixel :
+        # Margin of 25px where the card will not be present.
+        margin = 15
+        nb_pixel = (800 - (margin * 2) - new_width) * (800 - (margin * 2) - new_height)
+        # Do it in uniform way by picking one random value
+        pixel_position = random.randint(0, nb_pixel)
+        offset_y = int(float(pixel_position) / (800 - (margin * 2) - new_width))
+        offset_x = pixel_position - offset_y * (800 - (margin * 2) - new_width)
+        # Add the margin
+        offset_x = offset_x + margin
+        offset_y = offset_y + margin
+        # Appli the card
+        roi = background[offset_y:offset_y + new_height, offset_x:offset_x + new_width]
+        mtg_mask = mtg[:, :, 3] != 0
+        roi[mtg_mask] = mtg[mtg_mask]
+        background[offset_y:offset_y + new_height, offset_x:offset_x + new_width] = roi
+        data['x0'] = offset_x + data['x0']
+        data['x1'] = offset_x + data['x1']
+        data['x2'] = offset_x + data['x2']
+        data['x3'] = offset_x + data['x3']
+        data['y0'] = offset_y + data['y0']
+        data['y1'] = offset_y + data['y1']
+        data['y2'] = offset_y + data['y2']
+        data['y3'] = offset_y + data['y3']
+        background_bgr = cv2.cvtColor(background, cv2.COLOR_BGRA2BGR)
+
+
+        # Add brightness :
+        percent_brightness = random.randint(30, 55)
+        if percent_brightness < 50:
+            alpha = percent_brightness / 50.0
+            beta = 0.0
+        else:
+            alpha = 1.0
+            beta = 255.0 * (percent_brightness - 50) / 50.0
+        background_bgr = cv2.convertScaleAbs(background_bgr, alpha=alpha, beta=beta)
+
+        data['is_present'] = 1
+        return data, background_bgr
+    else:
+        background_bgr = cv2.cvtColor(background, cv2.COLOR_BGRA2BGR)
+        data = {}
+        data['x0'] = 0
+        data['x1'] = 0
+        data['x2'] = 0
+        data['x3'] = 0
+        data['y0'] = 0
+        data['y1'] = 0
+        data['y2'] = 0
+        data['y3'] = 0
+
+        data['is_present'] = 0
+        return data, background_bgr
 
 
 def noised_mtg_in_background_to_mtg(data: Dict[str, int], img: cv2.typing.MatLike) -> cv2.typing.MatLike:

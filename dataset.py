@@ -43,7 +43,7 @@ def generate_gray_dataset(exp_code: str, count: int) -> tf.data.Dataset:
         return tf.data.experimental.load(str(path))
 
     imgs_train = np.zeros((count, 400, 400, 1), dtype=np.float32)
-    labels_train = np.zeros((count, 8), dtype=np.float32)
+    labels_train = np.zeros((count, 9), dtype=np.float32)
 
     index = 0
     for index in tqdm.tqdm(range(count)):
@@ -68,7 +68,8 @@ def get_image_and_keypoint(exp_code: str):
                    data['y0'] / 800.0,
                    data['y1'] / 800.0,
                    data['y2'] / 800.0,
-                   data['y3'] / 800.0]
+                   data['y3'] / 800.0,
+                   data['is_present']]
     return img_train, label_train
 
 
@@ -84,7 +85,8 @@ def get_norm_image_and_keypoint(exp_code: str):
                    data['y0'] / 800.0,
                    data['y1'] / 800.0,
                    data['y2'] / 800.0,
-                   data['y3'] / 800.0]
+                   data['y3'] / 800.0,
+                   data['is_present']]
     return img_train, label_train
 
 
@@ -102,7 +104,8 @@ def get_norm_and_bgr_image_and_keypoint(exp_code: str):
                    data['y0'] / 800.0,
                    data['y1'] / 800.0,
                    data['y2'] / 800.0,
-                   data['y3'] / 800.0]
+                   data['y3'] / 800.0,
+                   data['is_present']]
     return img_train, label_train, background_bgr
 
 if __name__ == '__main__':

@@ -31,31 +31,67 @@ def build_card_corner_model(input_shape=(400, 400, 1)):
         tf.keras.layers.Flatten(),
         tf.keras.layers.Dense(256, activation='relu'),
         tf.keras.layers.Dropout(0.3),
-        tf.keras.layers.Dense(8, activation='sigmoid')  # 1 for card presence and 4 corner points (x1, y1, ..., x4, y4)
+        tf.keras.layers.Dense(9, activation='sigmoid')  # 1 for card presence and 4 corner points (x1, y1, ..., x4, y4)
     ])
 
     model.compile(optimizer='adam', loss='mean_squared_error', metrics=['mae'])
     return model
 
 
+mse_loss_fn = tf.keras.losses.MeanSquaredError(reduction='none')  # per-sample loss
+bce_loss_fn = tf.keras.losses.BinaryCrossentropy()
+
+
 # ===== 2. Custom Loss =====
 def custom_loss(y_true, y_pred):
-    y_true_coords = y_true[:, 1:]
-    y_pred_coords = y_pred[:, 1:]
+    # Extract values
+    y_true_coords = y_true[:, :8]  # First 8 values: coordinates
+    y_true_presence = y_true[:, 8]  # Last value: presence flag
 
-    y_true_presence = y_true[:, 0]
-    y_pred_presence = y_pred[:, 0]
+    y_pred_coords = y_pred[:, :8]
+    y_pred_presence = y_pred[:, 8]
 
-    keypoint_loss = tf.reduce_mean(tf.square(y_true_coords - y_pred_coords), axis=1)
-    presence_loss = tf.keras.losses.binary_crossentropy(y_true_presence, y_pred_presence)
+    # Coordinate loss: Mean Squared Error
+    coord_loss = mse_loss_fn(y_true_coords, y_pred_coords)
 
-    return keypoint_loss + 0.5 * presence_loss
+    # Apply mask: only consider coordinate loss if object is present
+    coord_loss = coord_loss * y_true_presence
 
+    # Presence loss: Binary Crossentropy
+    presence_loss = bce_loss_fn(y_true_presence, y_pred_presence)
+
+    # Combine both losses
+    total_loss = coord_loss + presence_loss
+
+    # Mean over batch
+    return tf.reduce_mean(total_loss)
+
+
+def presence_accuracy(y_true, y_pred):
+    y_true_presence = y_true[:, 8]
+    y_pred_presence = y_pred[:, 8]
+    return tf.keras.metrics.binary_accuracy(y_true_presence, y_pred_presence)
+
+
+def coord_mae_when_present(y_true, y_pred):
+    y_true_coords = y_true[:, :8]
+    y_pred_coords = y_pred[:, :8]
+    y_true_presence = y_true[:, 8]
+
+    abs_error = tf.abs(y_true_coords - y_pred_coords)
+    mae_per_sample = tf.reduce_mean(abs_error, axis=1)
+
+    # Mask with presence flag
+    mae_masked = mae_per_sample * y_true_presence
+
+    # Avoid division by 0 if no present objects in batch
+    total_present = tf.reduce_sum(y_true_presence)
+    return tf.reduce_sum(mae_masked) / (total_present + 1e-7)
 
 def generate_h5():
     model = build_card_corner_model()
     #model.compile(optimizer='adam', loss=custom_loss, metrics=['mae'])
-    model.compile(optimizer='adam', loss=tf.keras.losses.MeanSquaredError())
+    model.compile(optimizer='adam', loss=custom_loss, metrics=[presence_accuracy, coord_mae_when_present])
 
     class StopAtAccuracy(tf.keras.callbacks.Callback):
         def __init__(self, target_acc: float):
@@ -88,7 +124,7 @@ def generate_h5():
 
         print("Fit...")
         start = time.time()
-        model.fit(ds, epochs=4, callbacks=[StopAtAccuracy(0.97)])
+        model.fit(ds, epochs=count_epoch, callbacks=[StopAtAccuracy(0.97)])
         end = time.time()
         print("Fit : " + str(end - start))
 
@@ -129,11 +165,12 @@ def get_prediction(model, image_norm):
     data['y1'] = int(prediction[5] * 400)
     data['y2'] = int(prediction[6] * 400)
     data['y3'] = int(prediction[7] * 400)
+    data['is_present'] = 1.0 if prediction[8] > 0.5 else 0.0
     return data
 
 
 def load_border_detection_model():
-    model = tf.keras.models.load_model('model_border_detector.h5')
+    model = tf.keras.models.load_model('model_border_detector.keras', custom_objects={"custom_loss": custom_loss, "presence_accuracy": presence_accuracy, "coord_mae_when_present": coord_mae_when_present})
     return model
 
 if __name__ == '__main__':
