@@ -54,6 +54,7 @@ def generate_gray_dataset(exp_code: str, count: int) -> tf.data.Dataset:
 
     ds = tf.data.Dataset.from_tensor_slices((imgs_train, labels_train))
     tf.data.experimental.save(dataset=ds, path=str(path))
+    generate_gray_dataset.counter[exp_code][count] = id + 1
     return ds
 
 
