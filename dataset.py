@@ -23,30 +23,16 @@ def generate_data_set(count) -> tf.data.Dataset:
     return tf.data.Dataset.from_tensor_slices((imgs_train, labels_train))
 
 
-def generate_gray_dataset(exp_code: str, count: int) -> tf.data.Dataset:
-    if not hasattr(generate_gray_dataset, "counter"):
-        generate_gray_dataset.counter = {}  # initialize once
-
-    if exp_code in generate_gray_dataset.counter:
-        if count in generate_gray_dataset.counter[exp_code]:
-            id = generate_gray_dataset.counter[exp_code][count]
-        else:
-            id = 0
-            generate_gray_dataset.counter[exp_code][count] = id
-    else:
-        id = 0
-        generate_gray_dataset.counter[exp_code] = {count: id}
-
-    path = pathlib.Path("/mnt/e/dataset/mtg/", exp_code, str(count), f"ds_{id}.ds")
+def generate_gray_dataset(exp_code: str, id: int, size: int) -> tf.data.Dataset:
+    path = pathlib.Path("/mnt/e/dataset/mtg/", exp_code, "400_400_1__9", str(size), f"ds_{id}.ds")
     if path.exists():
-        generate_gray_dataset.counter[exp_code][count] = id + 1
         return tf.data.experimental.load(str(path))
 
-    imgs_train = np.zeros((count, 400, 400, 1), dtype=np.float32)
-    labels_train = np.zeros((count, 9), dtype=np.float32)
+    imgs_train = np.zeros((size, 400, 400, 1), dtype=np.float32)
+    labels_train = np.zeros((size, 9), dtype=np.float32)
 
     index = 0
-    for index in tqdm.tqdm(range(count)):
+    for index in tqdm.tqdm(range(size)):
         img_train, label_train = get_norm_image_and_keypoint(exp_code)
         imgs_train[index] = img_train.reshape((400, 400, 1))
         labels_train[index] = label_train
@@ -54,7 +40,6 @@ def generate_gray_dataset(exp_code: str, count: int) -> tf.data.Dataset:
 
     ds = tf.data.Dataset.from_tensor_slices((imgs_train, labels_train))
     tf.data.experimental.save(dataset=ds, path=str(path))
-    generate_gray_dataset.counter[exp_code][count] = id + 1
     return ds
 
 

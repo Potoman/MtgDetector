@@ -115,37 +115,38 @@ def generate_h5():
     size_dataset = 100
     count_epoch = 1
     start_all = time.time()
-    for step in range(count_step):
-        print("Step... (" + str(step) + ")")
-        start_step = time.time()
+    for epoch in range(count_epoch):
+        for step in range(count_step):
+            print(f"Epoch = {epoch}, Step = {step}...")
+            start_step = time.time()
 
-        print("Prepare dataset...")
-        start = time.time()
-        ds = dataset.generate_gray_dataset("mrd", size_dataset)
-        end = time.time()
-        print("Prepare dataset : " + str(end - start))
+            print("Prepare dataset...")
+            start = time.time()
+            ds = dataset.generate_gray_dataset("mrd", step, size_dataset)
+            end = time.time()
+            print("Prepare dataset : " + str(end - start))
 
-        # print("Suffle...")
-        # start = time.time()
-        ds = ds.batch(4) #.prefetch(tf.data.AUTOTUNE)
-        # end = time.time()
-        # print("Suffle : " + str(end - start))
+            # print("Suffle...")
+            # start = time.time()
+            ds = ds.batch(4) #.prefetch(tf.data.AUTOTUNE)
+            # end = time.time()
+            # print("Suffle : " + str(end - start))
 
-        print("Fit...")
-        start = time.time()
-        history = model.fit(ds, epochs=count_epoch, callbacks=[StopAtAccuracy(0.97)])
-        for key in combined_history:
-            combined_history[key].extend(history.history.get(key, []))
+            print("Fit...")
+            start = time.time()
+            history = model.fit(ds, epochs=1, callbacks=[StopAtAccuracy(0.97)])
+            for key in combined_history:
+                combined_history[key].extend(history.history.get(key, []))
 
-        end = time.time()
-        print("Fit : " + str(end - start))
+            end = time.time()
+            print("Fit : " + str(end - start))
 
-        print("Step : (" + str(step) + ")")
+            print("Step : (" + str(step) + ")")
 
-        del ds
-        gc.collect()
-        stop_step = time.time()
-        print("Step time : (" + str(stop_step - start_step) + ")")
+            del ds
+            gc.collect()
+            stop_step = time.time()
+            print("Step time : (" + str(stop_step - start_step) + ")")
 
     end_all = time.time()
     print("All time : (" + str(end_all - start_all) + ")")
