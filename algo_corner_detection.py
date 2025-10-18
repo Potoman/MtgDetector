@@ -7,6 +7,8 @@ import tensorflow as tf
 #from tf.keras import layers, models
 import dataset
 
+dropout = 0.0
+
 gpus = tf.config.experimental.list_physical_devices('GPU')
 if gpus:
     try:
@@ -30,7 +32,7 @@ def build_card_corner_model(input_shape=(400, 400, 1)):
 
         tf.keras.layers.Flatten(),
         tf.keras.layers.Dense(256, activation='relu'),
-        tf.keras.layers.Dropout(0.3),
+        tf.keras.layers.Dropout(dropout),
         tf.keras.layers.Dense(9, activation='sigmoid')  # 1 for card presence and 4 corner points (x1, y1, ..., x4, y4)
     ])
 
@@ -156,7 +158,7 @@ def generate_h5():
     plt.plot(combined_history['loss'], label='Training loss')
     plt.legend()
     plt.title(f"step : {count_step}; data set size : {size_dataset}; epoch : {count_epoch}")
-    plt.savefig(f"training_s{count_step}_ds{size_dataset}_e{count_epoch}.png")
+    plt.savefig(f"training_do{dropout}_s{count_step}_ds{size_dataset}_e{count_epoch}.png")
     plt.close()
 
     model.save('model_border_detector.keras')
