@@ -150,16 +150,17 @@ def generate_h5():
             stop_step = time.time()
             print("Step time : (" + str(stop_step - start_step) + ")")
 
+        import matplotlib.pyplot as plt
+        plt.plot(combined_history['coord_mae_when_present'], label='MAE')
+        plt.plot(combined_history['loss'], label='Training loss')
+        plt.legend()
+        plt.title(f"step : {count_step}; data set size : {size_dataset}; epoch : {count_epoch}")
+        plt.savefig(f"training_do{dropout}_s{count_step}_ds{size_dataset}_e{count_epoch}.png")
+        plt.close()
+
     end_all = time.time()
     print("All time : (" + str(end_all - start_all) + ")")
 
-    import matplotlib.pyplot as plt
-    plt.plot(combined_history['coord_mae_when_present'], label='MAE')
-    plt.plot(combined_history['loss'], label='Training loss')
-    plt.legend()
-    plt.title(f"step : {count_step}; data set size : {size_dataset}; epoch : {count_epoch}")
-    plt.savefig(f"training_do{dropout}_s{count_step}_ds{size_dataset}_e{count_epoch}.png")
-    plt.close()
 
     model.save('model_border_detector.keras')
 
