@@ -96,5 +96,7 @@ def get_norm_and_bgr_image_and_keypoint(exp_code: str):
 
 
 if __name__ == '__main__':
-    generate_data_set(10)
+    for id in range(100):
+        print(f"Generate data set id = {id}")
+        generate_gray_dataset('mrd', id, 800)
     print("pass")
