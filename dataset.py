@@ -24,12 +24,12 @@ def generate_data_set(count) -> tf.data.Dataset:
 
 
 def generate_gray_dataset(exp_code: str, id: int, size: int) -> tf.data.Dataset:
-    path = pathlib.Path("/mnt/e/dataset/mtg/", exp_code, "400_400_1__9", str(size), f"ds_{id}.ds")
+    path = pathlib.Path("/mnt/e/dataset/mtg/", exp_code, "400_400_1__8", str(size), f"ds_{id}.ds")
     if path.exists():
         return tf.data.experimental.load(str(path))
 
     imgs_train = np.zeros((size, 400, 400, 1), dtype=np.float32)
-    labels_train = np.zeros((size, 9), dtype=np.float32)
+    labels_train = np.zeros((size, 8), dtype=np.float32)
 
     index = 0
     for index in tqdm.tqdm(range(size)):
@@ -54,8 +54,7 @@ def get_image_and_keypoint(exp_code: str):
                    data['y0'] / 800.0,
                    data['y1'] / 800.0,
                    data['y2'] / 800.0,
-                   data['y3'] / 800.0,
-                   data['is_present']]
+                   data['y3'] / 800.0]
     return img_train, label_train
 
 
@@ -71,8 +70,7 @@ def get_norm_image_and_keypoint(exp_code: str):
                    data['y0'] / 800.0,
                    data['y1'] / 800.0,
                    data['y2'] / 800.0,
-                   data['y3'] / 800.0,
-                   data['is_present']]
+                   data['y3'] / 800.0]
     return img_train, label_train
 
 
@@ -90,8 +88,7 @@ def get_norm_and_bgr_image_and_keypoint(exp_code: str):
                    data['y0'] / 800.0,
                    data['y1'] / 800.0,
                    data['y2'] / 800.0,
-                   data['y3'] / 800.0,
-                   data['is_present']]
+                   data['y3'] / 800.0]
     return img_train, label_train, background_bgr
 
 
