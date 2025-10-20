@@ -137,9 +137,12 @@ def generate_h5():
         plt.savefig(f"training_do{dropout}_s{count_step}_ds{size_dataset}_e{count_epoch}.png")
         plt.close()
 
+        with open(f"training_do{dropout}_s{count_step}_ds{size_dataset}_e{count_epoch}.json", "w", encoding="utf-8") as f:
+            import json
+            json.dump(combined_history, f, indent=4, ensure_ascii=False)
+
     end_all = time.time()
     print("All time : (" + str(end_all - start_all) + ")")
-
 
     model.save('model_border_detector.keras')
 
