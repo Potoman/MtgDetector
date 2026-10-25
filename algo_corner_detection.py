@@ -390,7 +390,7 @@ def train_yolo_pose():
 
 def load_yolo_pose_model():
     from ultralytics import YOLO
-    return YOLO("runs/pose/card_corners/weights/best.pt")
+    return YOLO("runs/pose/runs/pose/card_corners/weights/best.pt")
 
 
 def get_yolo_prediction(model, image_bgr: cv2.typing.MatLike) -> dict:
