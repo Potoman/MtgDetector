@@ -4,13 +4,15 @@ import os
 import time
 
 
+HEADERS = {"User-Agent": "mtg-corner-detector/1.0"}
+
 expension = {}
 
 
 def list_set():
     """Get information about the most recent MTG set"""
     sets_url = "https://api.scryfall.com/sets"
-    response = requests.get(sets_url)
+    response = requests.get(sets_url, headers=HEADERS)
     sets_data = response.json()
 
     # Find the most recent standard set
@@ -45,7 +47,7 @@ def download_set_images(exp_code):
     # Process each page of results
     while has_more:
         print(f"Processing page {page}...")
-        response = requests.get(next_page_url)
+        response = requests.get(next_page_url, headers=HEADERS)
 
         # Check for rate limiting or errors
         if response.status_code != 200:
@@ -99,7 +101,7 @@ def save_image(image_url, directory, filename):
         return False
 
     try:
-        response = requests.get(image_url)
+        response = requests.get(image_url, headers=HEADERS)
         if response.status_code == 200:
             file_path = os.path.join(directory, f"{filename}.jpg")
             with open(file_path, "wb") as f:
