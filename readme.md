@@ -75,3 +75,9 @@ python src/webcam.py
 ```
 
 > `selection_model` doit correspondre au modèle entraîné.
+
+# Study
+
+The result with Yolo Pose is really good.
+The trapezoid is well detected wherever the card are. The tilt of the card shouldn't exceed some degree but
+I can improve this with a better dataset ok keep it that way. User will not tilt there card for fun on a scan process.
