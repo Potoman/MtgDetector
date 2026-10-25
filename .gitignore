@@ -2,4 +2,5 @@
 /training_*
 /.venvwin
 /.venvwsl
+/scryfall
 __pycache__
