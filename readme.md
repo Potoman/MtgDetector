@@ -1,5 +1,15 @@
 # MTG Card Corner Detection
 
+## Preview
+
+### Card detected
+
+![Card detected](resources/detected_card.png)
+
+### No card detected
+
+![No card](resources/no_card.png)
+
 ## Environnement : WSL Ubuntu 24.04
 
 ### 1. Installation des dépendances
