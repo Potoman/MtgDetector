@@ -1,3 +1,4 @@
 /yolo_pose_dataset
 /training_*
 /.venvwin
+/.venvwsl

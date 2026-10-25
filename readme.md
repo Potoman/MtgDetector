@@ -5,9 +5,10 @@
 ### 1. Installation des dépendances
 
 ```bash
-cd mtg
-source venvwsl/bin/activate
-pip install ultralytics
+python3 -m venv .venvwsl
+source .venvwsl/bin/activate
+python3 -m pip install --upgrade pip
+pip install -r requirements.txt
 ```
 
 ---
@@ -25,7 +26,7 @@ selection_model = 5
 ### 3. Lancer l'entraînement
 
 ```bash
-source venvwsl/bin/activate
+source .venvwsl/bin/activate
 python3 algo_corner_detection.py
 ```
 
@@ -50,14 +51,14 @@ selection_model = 0  # ou 1, 2, 3, 4
 ### 3. Pré-générer le dataset (optionnel, recommandé)
 
 ```bash
-source venvwsl/bin/activate
+source .venvwsl/bin/activate
 python3 dataset.py
 ```
 
 ### 4. Lancer l'entraînement
 
 ```bash
-source venvwsl/bin/activate
+source .venvwsl/bin/activate
 python3 algo_corner_detection.py
 ```
 
