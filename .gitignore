@@ -2,3 +2,4 @@
 /training_*
 /.venvwin
 /.venvwsl
+__pycache__

@@ -17,7 +17,7 @@ pip install -r requirements.txt
 
 ### 2. Configurer le modèle
 
-Dans `algo_corner_detection.py`, ligne 20 :
+Dans `src/algo_corner_detection.py`, ligne 20 :
 
 ```python
 selection_model = 5
@@ -27,7 +27,7 @@ selection_model = 5
 
 ```bash
 source .venvwsl/bin/activate
-python3 algo_corner_detection.py
+python3 src/algo_corner_detection.py
 ```
 
 Cela va automatiquement :
@@ -42,7 +42,7 @@ Cela va automatiquement :
 
 ### 2. Configurer le modèle
 
-Dans `algo_corner_detection.py`, ligne 20 :
+Dans `src/algo_corner_detection.py`, ligne 20 :
 
 ```python
 selection_model = 0  # ou 1, 2, 3, 4
@@ -52,14 +52,14 @@ selection_model = 0  # ou 1, 2, 3, 4
 
 ```bash
 source .venvwsl/bin/activate
-python3 dataset.py
+python3 src/dataset.py
 ```
 
 ### 4. Lancer l'entraînement
 
 ```bash
 source .venvwsl/bin/activate
-python3 algo_corner_detection.py
+python3 src/algo_corner_detection.py
 ```
 
 ---
@@ -71,7 +71,7 @@ python -m venv .venvwin
 .venvwin\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 pip install -r requirements.txt
-python3 webcam.py
+python src/webcam.py
 ```
 
 > `selection_model` doit correspondre au modèle entraîné.
