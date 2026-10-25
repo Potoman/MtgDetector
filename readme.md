@@ -1,5 +1,13 @@
 # MTG Card Corner Detection
 
+# TODO
+
+- [ ] Improve the training by adding a "fake sleeve" for better card detection.
+- [ ] From the reshaped card, search the card information:
+  - [ ] Mana cost, type, subtype, edition, foil information
+  - [ ] Language (EN, JP, FR, ...)
+  - [ ] Frame print version (old, new, full art, alternative)
+
 ## Preview
 
 ### Card detected
