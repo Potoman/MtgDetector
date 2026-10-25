@@ -336,10 +336,12 @@ def generate_yolo_pose_dataset(exp_code: str, count: int, val_ratio: float = 0.1
 
         xs = [x0, x1, x2, x3]
         ys = [y0, y1, y2, y3]
-        cx = sum(xs) / 4
-        cy = sum(ys) / 4
-        bw = max(xs) - min(xs)
-        bh = max(ys) - min(ys)
+        x_min, x_max = min(xs), max(xs)
+        y_min, y_max = min(ys), max(ys)
+        cx = (x_min + x_max) / 2
+        cy = (y_min + y_max) / 2
+        bw = x_max - x_min
+        bh = y_max - y_min
 
         # YOLO pose format: class cx cy w h kp1x kp1y kp2x kp2y kp3x kp3y kp4x kp4y
         line = f"0 {cx:.6f} {cy:.6f} {bw:.6f} {bh:.6f} {x0:.6f} {y0:.6f} {x1:.6f} {y1:.6f} {x2:.6f} {y2:.6f} {x3:.6f} {y3:.6f}\n"
