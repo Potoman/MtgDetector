@@ -66,8 +66,8 @@ python3 algo_corner_detection.py
 ## Inference webcam (Windows uniquement)
 
 ```Powershell
-python -m venv .venv
-.venv\Scripts\Activate.ps1
+python -m venv .venvwin
+.venvwin\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 pip install -r requirements.txt
 python3 webcam.py
