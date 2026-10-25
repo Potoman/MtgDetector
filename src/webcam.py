@@ -1,13 +1,16 @@
 import cv2
-import algo_corner_detection
 import overlay
 
-if __name__ == '__main__':
-    use_yolo = algo_corner_detection.selection_model == 5
+# True: YOLO Pose (yolo_pose.py, Ultralytics). False: Keras models 0-4 (algo_corner_detection.py, TensorFlow).
+use_yolo = True
 
+if __name__ == '__main__':
+    # Import only the framework we need, so TensorFlow and PyTorch are never loaded together.
     if use_yolo:
-        model = algo_corner_detection.load_yolo_pose_model()
+        import yolo_pose
+        model = yolo_pose.load_yolo_pose_model()
     else:
+        import algo_corner_detection
         model = algo_corner_detection.load_border_detection_model()
 
     cap = cv2.VideoCapture(0)
@@ -30,7 +33,7 @@ if __name__ == '__main__':
         image_bgr_resized = cv2.resize(image_bgr_cropped, (400, 400), interpolation=cv2.INTER_LINEAR)
 
         if use_yolo:
-            prediction = algo_corner_detection.get_yolo_prediction(model, image_bgr_resized)
+            prediction = yolo_pose.get_yolo_prediction(model, image_bgr_resized)
         else:
             image_gray = cv2.cvtColor(image_bgr_resized, cv2.COLOR_BGR2GRAY)
             image_norm = image_gray / 255.0

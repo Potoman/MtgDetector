@@ -1,5 +1,4 @@
 import cv2
-import algo
 import crop
 import json
 import random
@@ -37,6 +36,7 @@ def get_bgra_random(exp_code: str):
 
 
 def webcam_to_canny():
+    import algo  # imported here: algo loads TensorFlow, which must not be loaded with YOLO
     cap = cv2.VideoCapture(0)
 
     # Check if the webcam is opened
