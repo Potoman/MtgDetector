@@ -190,6 +190,14 @@ def show_noise():
 
 
 def get_noised_mtg(exp_code: str, illustration_id: str, height: int = 680, width: int = 488) -> (Dict[str, int], cv2.typing.MatLike):
+    """
+    Generate a noised mtg image in a height x width rectangle.
+    :param exp_code: expension code
+    :param illustration_id: illustration id of the card we wanted
+    :param height: height of the output imaage
+    :param width: width of the output image
+    :return:
+    """
     mtg = crop.get_bgra_image(exp_code, illustration_id, height, width)
     # Add distorsion :
     pixel_distorsion = 50
@@ -240,6 +248,7 @@ def get_noised_mtg_in_background(exp_code: str, illustration_id: str) -> (Dict[s
         background = cv2.GaussianBlur(background, (kernel, kernel), 0)
 
     if random.randint(0, 10) < 99:
+        # We add a mtg image :
         data, mtg = get_noised_mtg(exp_code, illustration_id)
         # Add blur :
         kernel = random.choice(range(1, 12, 2))
