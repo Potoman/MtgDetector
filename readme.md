@@ -77,7 +77,7 @@ python3 src/dataset.py
 
 ```bash
 source .venvwsl/bin/activate
-python3 src/algo_corner_detection.py
+python3 src/yolo_pose.py
 ```
 
 ---
