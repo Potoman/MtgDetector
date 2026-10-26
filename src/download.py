@@ -2,6 +2,7 @@ import requests
 import json
 import os
 import time
+from pathlib import Path
 
 
 HEADERS = {"User-Agent": "mtg-corner-detector/1.0"}
@@ -32,7 +33,7 @@ def list_set():
 def download_set_images(exp_code):
     """Download all card images from a specific set"""
     # Create directory for images
-    image_dir = f"mtg_images_{exp_code}"
+    image_dir = Path("..") / "scryfall" / "image" / exp_code
     os.makedirs(image_dir, exist_ok=True)
 
     # Set up pagination - Scryfall returns cards in pages
@@ -48,6 +49,12 @@ def download_set_images(exp_code):
     while has_more:
         print(f"Processing page {page}...")
         response = requests.get(next_page_url, headers=HEADERS)
+
+        # No card foundfor the expension code.
+        if response.status_code == 404:
+            has_more = False
+            print(f"No cards found for this expension.")
+            continue
 
         # Check for rate limiting or errors
         if response.status_code != 200:
@@ -123,8 +130,16 @@ if __name__ == "__main__":
     # Get the latest set
     list_set()
     exp_code = input(f"Which expension ? : ")
-    card_count = download_set_images(exp_code)
-    print(f"Download complete. {card_count} cards saved.")
+    if exp_code == "*":
+        count = 1
+        for exp in expension.keys():
+            print(f"Expension '{expension[exp]['name']}' downloading ({count}/{len(expension)})... ")
+            card_count = download_set_images(exp)
+            print(f"Download complete. {card_count} cards saved.")
+            count = count + 1
+    else:
+        card_count = download_set_images(exp_code)
+        print(f"Download complete. {card_count} cards saved.")
 
 
 
