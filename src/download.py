@@ -30,10 +30,11 @@ def list_set():
     #return latest_set
 
 
-def download_set_images(exp_code):
+def download_expension(exp_code: str, image: bool):
     """Download all card images from a specific set"""
     # Create directory for images
-    image_dir = Path("..") / "scryfall" / "image" / exp_code
+    exp_dir = Path("..") / "scryfall" / exp_code
+    image_dir = exp_dir / "image"
     os.makedirs(image_dir, exist_ok=True)
 
     # Set up pagination - Scryfall returns cards in pages
@@ -66,26 +67,27 @@ def download_set_images(exp_code):
         data = response.json()
         cards.extend(data.get("data", []))
 
-        # Process each card on the current page
-        for card in data.get("data", []):
-            card_count += 1
-            card_name = card["name"].replace("//", "_").replace(" ", "_")
-            image_type = "normal"  # Options include: small, normal, large, png, art_crop, border_crop
+        if image:
+            # Process each card on the current page
+            for card in data.get("data", []):
+                card_count += 1
+                card_name = card["name"].replace("//", "_").replace(" ", "_")
+                image_type = "normal"  # Options include: small, normal, large, png, art_crop, border_crop
 
-            # Some cards have multiple faces
-            if "image_uris" in card:
-                # Single-faced card
-                image_url = card["image_uris"].get(image_type)
-                save_image(image_url, image_dir, f"{card['illustration_id']}")
-            elif "card_faces" in card:
-                # Double-faced card
-                for i, face in enumerate(card["card_faces"]):
-                    if "image_uris" in face:
-                        image_url = face["image_uris"].get(image_type)
-                        save_image(image_url, image_dir, f"{face['illustration_id']}")
+                # Some cards have multiple faces
+                if "image_uris" in card:
+                    # Single-faced card
+                    image_url = card["image_uris"].get(image_type)
+                    save_image(image_url, image_dir, f"{card['illustration_id']}")
+                elif "card_faces" in card:
+                    # Double-faced card
+                    for i, face in enumerate(card["card_faces"]):
+                        if "image_uris" in face:
+                            image_url = face["image_uris"].get(image_type)
+                            save_image(image_url, image_dir, f"{face['illustration_id']}")
 
-            # Be nice to the API - don't flood it with requests
-            time.sleep(0.1)
+                # Be nice to the API - don't flood it with requests
+                time.sleep(0.1)
 
         # Check if there are more pages
         has_more = data.get("has_more", False)
@@ -95,7 +97,7 @@ def download_set_images(exp_code):
         page += 1
         time.sleep(0.5)
 
-    with open(f'result_{exp_code}.json', 'w+') as fp:
+    with open(exp_dir / f'info.json', 'w+') as fp:
         json.dump(cards, fp, indent=4)
 
     print(f"Downloaded images for {card_count} cards from set {exp_code}")
@@ -130,15 +132,16 @@ if __name__ == "__main__":
     # Get the latest set
     list_set()
     exp_code = input(f"Which expension ? : ")
+    with_image = input(f"With image (N/y) ? : ")
     if exp_code == "*":
         count = 1
         for exp in expension.keys():
             print(f"Expension '{expension[exp]['name']}' downloading ({count}/{len(expension)})... ")
-            card_count = download_set_images(exp)
+            card_count = download_expension(exp, with_image == "y")
             print(f"Download complete. {card_count} cards saved.")
             count = count + 1
     else:
-        card_count = download_set_images(exp_code)
+        card_count = download_expension(exp_code, with_image == "y")
         print(f"Download complete. {card_count} cards saved.")
 
 
