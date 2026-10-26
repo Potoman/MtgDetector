@@ -125,9 +125,6 @@ def save_image(image_url, directory, filename):
         return False
 
 
-
-
-
 if __name__ == "__main__":
     # Get the latest set
     list_set()
@@ -143,7 +140,3 @@ if __name__ == "__main__":
     else:
         card_count = download_expension(exp_code, with_image == "y")
         print(f"Download complete. {card_count} cards saved.")
-
-
-
-
