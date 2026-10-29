@@ -75,7 +75,7 @@ class TrainingDefinition:
     samples_per_key: int = 1        # Number of different images kept for each unique key
     input_size: int = 64            # The crop is resized to input_size x input_size
     jitter: float = 0.1             # Random shift of the rectangle (fraction of its size) for augmentation
-    epochs: int = 300
+    epochs: int = 400
     batch_size: int = 32
     learning_rate: float = 1e-3
     val_ratio: float = 0.2          # Only applied to labels having at least 2 samples
@@ -462,7 +462,7 @@ def training():
             name="set",
             label="set",
             sub_categories=["rarity", "colors"],
-            rect=Rect(center_x=420, center_y=400, height=32, width=70),
+            rect=Rect(center_x=420, center_y=402, height=38, width=70),
             accept={"frame": ["2015"], "layout": ["normal"]},
             filters={"type_line": ["Legendary Planeswalker", "Planeswalker"]}
         ),
