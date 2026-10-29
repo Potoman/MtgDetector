@@ -263,7 +263,7 @@ def build_samples(definition: TrainingDefinition,
             samples.append(Sample(crop, key[0], key, str(expected_path)))
 
             if definition.save_crops:
-                label_dir = crops_dir / _safe(key[0])
+                label_dir = crops_dir / f"exp_{_safe(key[0])}"
                 label_dir.mkdir(parents=True, exist_ok=True)
                 name = "_".join(_safe(v) for v in key[1:]) or "key"
                 cv2.imwrite(str(label_dir / f"{name}_{image.illustration_id[:8]}.png"),
