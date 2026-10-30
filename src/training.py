@@ -33,6 +33,7 @@ from typing import Dict, List, NamedTuple, Optional, Tuple
 import cv2
 import numpy as np
 import torch
+import tqdm
 from torch import nn
 from torch.utils.data import DataLoader, Dataset
 
@@ -80,6 +81,14 @@ class TrainingDefinition:
     learning_rate: float = 1e-3
     val_ratio: float = 0.2          # Only applied to labels having at least 2 samples
     save_crops: bool = True         # Save the crops in runs/classify/<name>/crops to check the rectangle
+    # Gaussian blur kernel sizes (odd numbers). Each size adds one blurred copy of every sample:
+    # [5] doubles the dataset, [3, 7] triples it. Empty = no blurred copies.
+    blur_kernels: List[int] = field(default_factory=list)
+    # Shifted copies: for each distance of the list, every sample is moved by that many pixels
+    # (card coordinates) in the 8 directions (straight and diagonal). The uncovered side repeats
+    # the border pixels. Each distance gives 8 more samples per sample:
+    # [4] -> dataset x9, [3, 6, 9] -> dataset x25. Empty = no shifted copies.
+    shift_pixels: List[int] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -377,6 +386,43 @@ def _evaluate(model, loader, device) -> float:
     return correct / total if total else float("nan")
 
 
+# (dx, dy) of the 8 directions: diagonals and straight.
+SHIFT_DIRECTIONS = [(-1, -1), (0, -1), (1, -1),
+                    (-1, 0),           (1, 0),
+                    (-1, 1),  (0, 1),  (1, 1)]
+
+
+def _add_shifted_copies(samples: List[Sample], shifts: List[int]) -> List[Sample]:
+    """
+    Return the samples + 8 copies of every sample for each distance of `shifts`, moved by that
+    many pixels in the 8 directions (border pixels repeated).
+    """
+    if isinstance(shifts, int):  # Also accept a single distance: 4 -> [4]
+        shifts = [shifts]
+    copies = []
+    for sample in samples:
+        height, width = sample.crop_bgr.shape[:2]
+        for shift in shifts:
+            if shift <= 0:
+                continue
+            for dx, dy in SHIFT_DIRECTIONS:
+                matrix = np.float32([[1, 0, dx * shift], [0, 1, dy * shift]])
+                shifted = cv2.warpAffine(sample.crop_bgr, matrix, (width, height), borderMode=cv2.BORDER_REPLICATE)
+                copies.append(Sample(shifted, sample.label, sample.key, sample.image_path))
+    return samples + copies
+
+
+def _add_blurred_copies(samples: List[Sample], kernels: List[int]) -> List[Sample]:
+    """Return the samples + one blurred copy of every sample for each kernel size."""
+    copies = []
+    for kernel in kernels:
+        kernel = kernel if kernel % 2 == 1 else kernel + 1  # GaussianBlur needs an odd size
+        for sample in samples:
+            blurred = cv2.GaussianBlur(sample.crop_bgr, (kernel, kernel), 0)
+            copies.append(Sample(blurred, sample.label, sample.key, sample.image_path))
+    return samples + copies
+
+
 def train_model(definition: TrainingDefinition, samples: List[Sample]) -> Path:
     classes = sorted({sample.label for sample in samples})
     class_to_index = {name: i for i, name in enumerate(classes)}
@@ -384,6 +430,19 @@ def train_model(definition: TrainingDefinition, samples: List[Sample]) -> Path:
           f"{dict(Counter(sample.label for sample in samples))}")
 
     train_samples, val_samples = _split(samples, definition.val_ratio)
+    # Copies are added after the split, so a sample and its copies are always on the same side:
+    # the validation never contains a shifted or blurred version of a training image.
+    # Shift first, then blur: the shifted copies also get their blurred copies.
+    if definition.shift_pixels:
+        train_samples = _add_shifted_copies(train_samples, definition.shift_pixels)
+        val_samples = _add_shifted_copies(val_samples, definition.shift_pixels)
+        print(f"[{definition.name}] With shifted copies ({definition.shift_pixels} px, 8 directions each): "
+              f"{len(train_samples)} train, {len(val_samples)} val samples.")
+    if definition.blur_kernels:
+        train_samples = _add_blurred_copies(train_samples, definition.blur_kernels)
+        val_samples = _add_blurred_copies(val_samples, definition.blur_kernels)
+        print(f"[{definition.name}] With blurred copies (kernels {definition.blur_kernels}): "
+              f"{len(train_samples)} train, {len(val_samples)} val samples.")
     train_loader = DataLoader(CropDataset(train_samples, class_to_index, definition, augment=True),
                               batch_size=definition.batch_size, shuffle=True)
     # Without a validation split, the accuracy is measured on the (non augmented) training crops.
@@ -396,20 +455,26 @@ def train_model(definition: TrainingDefinition, samples: List[Sample]) -> Path:
     optimizer = torch.optim.Adam(model.parameters(), lr=definition.learning_rate)
     criterion = nn.CrossEntropyLoss()
 
+    acc_name = "val_acc" if val_samples else "train_acc"
     for epoch in range(definition.epochs):
         model.train()
         total_loss, total = 0.0, 0
-        for images, targets in train_loader:
-            images, targets = images.to(device), targets.to(device)
-            optimizer.zero_grad()
-            loss = criterion(model(images), targets)
-            loss.backward()
-            optimizer.step()
-            total_loss += loss.item() * targets.numel()
-            total += targets.numel()
-        accuracy = _evaluate(model, eval_loader, device)
-        print(f"[{definition.name}] Epoch {epoch + 1}/{definition.epochs} "
-              f"loss={total_loss / max(total, 1):.4f} {eval_name} acc={accuracy:.3f}")
+        # One progress bar per epoch: one step per batch, with the running loss.
+        with tqdm.tqdm(total=len(train_loader), unit="batch",
+                       desc=f"[{definition.name}] Epoch {epoch + 1}/{definition.epochs}") as progress:
+            for images, targets in train_loader:
+                images, targets = images.to(device), targets.to(device)
+                optimizer.zero_grad()
+                loss = criterion(model(images), targets)
+                loss.backward()
+                optimizer.step()
+                total_loss += loss.item() * targets.numel()
+                total += targets.numel()
+                progress.set_postfix(loss=f"{total_loss / total:.4f}")
+                progress.update(1)
+            # The accuracy is added at the end of the bar.
+            accuracy = _evaluate(model, eval_loader, device)
+            progress.set_postfix({"loss": f"{total_loss / max(total, 1):.4f}", acc_name: f"{accuracy:.3f}"})
 
     output_dir = OUTPUT_DIR / definition.name
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -462,9 +527,14 @@ def training():
             name="set",
             label="set",
             sub_categories=["rarity", "colors"],
-            rect=Rect(center_x=420, center_y=402, height=38, width=70),
+            rect=Rect(center_x=436, center_y=402, height=64, width=64),
             accept={"frame": ["2015"], "layout": ["normal"]},
-            filters={"type_line": ["Legendary Planeswalker", "Planeswalker"]}
+            filters={"type_line": ["Legendary Planeswalker", "Planeswalker"]},
+            samples_per_key=10,
+            epochs=10,
+            batch_size=32,
+            blur_kernels=[3, 5],
+            shift_pixels=[2, 4, 6],
         ),
     ]
 
