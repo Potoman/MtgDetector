@@ -207,7 +207,7 @@ def train_yolo_pose(count: int = 2000, exp_code: Union[str, List[str]] = "*",
     model = YOLO("yolov8s-pose.pt")
     model.train(
         data=yaml_path,
-        epochs=100,
+        epochs=400,
         imgsz=400,
         batch=64,
         workers=0,

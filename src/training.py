@@ -855,14 +855,14 @@ def training():
             name="set",
             label="set",
             sub_categories=["rarity", "colors"],
-            rect=Rect(center_x=436, center_y=402, height=64, width=64),
+            rect=Rect(center_x=430, center_y=402, height=64, width=64),
             accept={"frame": ["2015"], "layout": ["normal"]},
             filters={"type_line": ["Legendary Planeswalker", "Planeswalker"]},
-            samples_per_key=4,
+            samples_per_key=1,
             epochs=20,
             batch_size=32,
-            blur_kernels=[3, 5],
-            shift_pixels=[2, 4, 6],
+            blur_kernels=[3],
+            shift_pixels=[2, 4, 6, 8, 10, 12, 14 ,16],
         ),
     ]
 
