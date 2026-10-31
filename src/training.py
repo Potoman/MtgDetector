@@ -12,10 +12,14 @@ For each training:
    of a double-faced card is its own image), the label value and the sub-category values
    build a key: (label, sub_category_1, sub_category_2, ...).
 2. Each unique key is kept once (up to `samples_per_key` different images).
-3. The images of each key are downloaded if needed (download.download_if_not_exist) and the
-   rectangle is cropped. The crop is bound to the label value.
-4. A small PyTorch CNN classifier is trained on the crops and saved in
+3. The images of each key are downloaded if needed (download.download_if_not_exist).
+4. The rectangle is cropped. The crop is bound to the label value.
+5. A small PyTorch CNN classifier is trained on the crops and saved in
    <root>/runs/classify/<name>/model.pt
+
+Steps 1-2, 3 and 4 are stamped in <root>/runs/classify/<name>/: key.stamp, download.stamp and
+crop.stamp. A step whose stamp matches the TrainingDefinition is skipped on the next launch.
+Delete a .stamp file to force its step (and the following ones) to run again.
 
 Uses PyTorch only. Do not import TensorFlow (or modules that import it, such as
 algo_corner_detection, dataset or algo) from this file: loading TensorFlow and PyTorch in
@@ -23,6 +27,7 @@ the same process can make their CUDA libraries clash.
 
 Run from anywhere: python3 src/training.py
 """
+import hashlib
 import json
 import random
 from collections import Counter, defaultdict
@@ -213,12 +218,47 @@ def collect_keys(definition: TrainingDefinition) -> Dict[Tuple[str, ...], List[I
     return dict(keys)
 
 
-# Stamp of collect_keys: runs/classify/<name>/keys.json holds the keys, done.stamp holds the
-# TrainingDefinition fields used to list them. If done.stamp matches the current fields,
-# keys.json is loaded instead of reading every info.json again.
-# Delete done.stamp to force a new collect (ex: after downloading new info.json files).
+# Stamps, in runs/classify/<name>/. Each one holds what its step depends on: if it matches the
+# current TrainingDefinition, the step is skipped. Each stamp is removed before its step runs
+# and written last, so a step stopped in the middle is never seen as done.
+# - key.stamp: the TrainingDefinition fields used to list the keys (keys saved in keys.json).
+# - download.stamp: the same fields + a hash of the keys. Only written if every image was
+#   downloaded, so failed downloads are retried at the next launch.
+# - crop.stamp: the same fields + a hash of the keys + rect and jitter, which change the crops
+#   (crops saved in crops.npz).
+# The hash of the keys makes download.stamp and crop.stamp invalid when the keys are collected
+# again and are different, even with the same fields (ex: new info.json files).
 KEYS_FILE = "keys.json"
-STAMP_FILE = "done.stamp"
+KEY_STAMP_FILE = "key.stamp"
+OLD_KEY_STAMP_FILE = "done.stamp"  # Previous name of key.stamp, renamed automatically
+DOWNLOAD_STAMP_FILE = "download.stamp"
+CROPS_FILE = "crops.npz"
+CROP_STAMP_FILE = "crop.stamp"
+
+
+def _stamp_matches(stamp_path: Path, stamp: dict) -> bool:
+    """True if the stamp file exists and holds exactly `stamp`."""
+    try:
+        with open(stamp_path, "r", encoding="utf-8") as fp:
+            return json.load(fp) == stamp
+    except (OSError, ValueError):
+        return False
+
+
+def _remove_stamp(stamp_path: Path):
+    if stamp_path.exists():
+        stamp_path.unlink()
+
+
+def _write_stamp(stamp_path: Path, stamp: dict):
+    stamp_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(stamp_path, "w", encoding="utf-8") as fp:
+        json.dump(stamp, fp, indent=4)
+
+
+def _keys_hash(keys: Dict[Tuple[str, ...], List["ImageRef"]]) -> str:
+    content = json.dumps([[list(key), [vars(image) for image in images]] for key, images in sorted(keys.items())])
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
 def _keys_stamp(definition: TrainingDefinition) -> dict:
@@ -234,44 +274,79 @@ def _keys_stamp(definition: TrainingDefinition) -> dict:
 
 
 def load_or_collect_keys(definition: TrainingDefinition) -> Dict[Tuple[str, ...], List[ImageRef]]:
-    """collect_keys, or the saved keys if done.stamp matches the current TrainingDefinition."""
+    """collect_keys, or the saved keys if key.stamp matches the current TrainingDefinition."""
     output_dir = OUTPUT_DIR / definition.name
     keys_path = output_dir / KEYS_FILE
-    stamp_path = output_dir / STAMP_FILE
+    stamp_path = output_dir / KEY_STAMP_FILE
     stamp = _keys_stamp(definition)
 
-    if stamp_path.exists() and keys_path.exists():
+    # Stamp written by a previous version under its old name: rename it once.
+    old_stamp_path = output_dir / OLD_KEY_STAMP_FILE
+    if old_stamp_path.exists() and not stamp_path.exists():
+        old_stamp_path.rename(stamp_path)
+
+    if keys_path.exists() and _stamp_matches(stamp_path, stamp):
         try:
-            with open(stamp_path, "r", encoding="utf-8") as fp:
-                saved_stamp = json.load(fp)
-            if saved_stamp == stamp:
-                with open(keys_path, "r", encoding="utf-8") as fp:
-                    saved_keys = json.load(fp)
-                keys = {tuple(entry["key"]): [ImageRef(**image) for image in entry["images"]]
-                        for entry in saved_keys}
-                print(f"[{definition.name}] Keys loaded from {keys_path} ({STAMP_FILE} is up to date).")
-                return keys
-            print(f"[{definition.name}] {STAMP_FILE} doesn't match the TrainingDefinition, collecting the keys again.")
+            with open(keys_path, "r", encoding="utf-8") as fp:
+                saved_keys = json.load(fp)
+            keys = {tuple(entry["key"]): [ImageRef(**image) for image in entry["images"]]
+                    for entry in saved_keys}
+            print(f"[{definition.name}] Keys loaded from {keys_path} ({KEY_STAMP_FILE} is up to date).")
+            return keys
         except (OSError, ValueError, KeyError, TypeError) as error:
             print(f"[{definition.name}] Can't read the saved keys ({error}), collecting them again.")
+    elif stamp_path.exists():
+        print(f"[{definition.name}] {KEY_STAMP_FILE} doesn't match the TrainingDefinition, collecting the keys again.")
 
+    _remove_stamp(stamp_path)
     keys = collect_keys(definition)
-
     output_dir.mkdir(parents=True, exist_ok=True)
-    # The old stamp is removed first and the new one written last: if the program stops while
-    # writing keys.json, there is no valid stamp and the keys are collected again next time.
-    if stamp_path.exists():
-        stamp_path.unlink()
     with open(keys_path, "w", encoding="utf-8") as fp:
         json.dump([{"key": list(key), "images": [vars(image) for image in images]}
                    for key, images in keys.items()], fp, indent=4)
-    with open(stamp_path, "w", encoding="utf-8") as fp:
-        json.dump(stamp, fp, indent=4)
+    _write_stamp(stamp_path, stamp)
     return keys
 
 
 # ---------------------------------------------------------------------------
-# 2. Get the images and crop the rectangle
+# 2. Download the images
+# ---------------------------------------------------------------------------
+
+def _image_path(image: ImageRef) -> Path:
+    """Where download.download_if_not_exist saves the image of this face."""
+    return SCRYFALL_DIR / f"exp_{image.exp_code}" / "image" / f"{image.illustration_id}.jpg"
+
+
+def _download_stamp(definition: TrainingDefinition, keys: Dict[Tuple[str, ...], List[ImageRef]]) -> dict:
+    return {"keys": _keys_stamp(definition), "keys_hash": _keys_hash(keys)}
+
+
+def download_images(definition: TrainingDefinition, keys: Dict[Tuple[str, ...], List[ImageRef]]):
+    """Download every image of the keys that is not on disk yet, unless download.stamp matches."""
+    stamp_path = OUTPUT_DIR / definition.name / DOWNLOAD_STAMP_FILE
+    stamp = _download_stamp(definition, keys)
+    if _stamp_matches(stamp_path, stamp):
+        print(f"[{definition.name}] Images already downloaded ({DOWNLOAD_STAMP_FILE} is up to date).")
+        return
+
+    _remove_stamp(stamp_path)
+    images = [image for key in sorted(keys) for image in keys[key]]
+    failed = []
+    for image in tqdm.tqdm(images, desc=f"[{definition.name}] Download", unit="image"):
+        # Download all faces of the card if needed, then check the face of this key.
+        paths = download.download_if_not_exist(image.exp_code, image.card_id)
+        if str(_image_path(image)) not in paths:
+            failed.append(_image_path(image))
+
+    if failed:
+        print(f"[{definition.name}] {len(failed)} image(s) could not be downloaded, ex: {failed[0]}. "
+              f"{DOWNLOAD_STAMP_FILE} not written: they will be retried at the next launch.")
+        return
+    _write_stamp(stamp_path, stamp)
+
+
+# ---------------------------------------------------------------------------
+# 3. Crop the rectangle
 # ---------------------------------------------------------------------------
 
 def _crop_margin(rect: Rect, jitter: float) -> Tuple[int, int]:
@@ -312,11 +387,9 @@ def build_samples(definition: TrainingDefinition,
     for index, (key, images) in enumerate(sorted(keys.items())):
         print(f"[{definition.name}] Key {index + 1}/{len(keys)}: {key}")
         for image in images:
-            image_dir = SCRYFALL_DIR / f"exp_{image.exp_code}" / "image"
-            expected_path = image_dir / f"{image.illustration_id}.jpg"
-            # Download all faces of the card if needed, then keep the face of this key.
-            paths = download.download_if_not_exist(image.exp_code, image.card_id)
-            if str(expected_path) not in paths:
+            # The images are downloaded by download_images, before this step.
+            expected_path = _image_path(image)
+            if not expected_path.exists():
                 print(f"  Image not available: {expected_path}")
                 continue
 
@@ -339,6 +412,61 @@ def build_samples(definition: TrainingDefinition,
 
 def _safe(text: str) -> str:
     return "".join(c if c.isalnum() or c in "-_" else "_" for c in text)
+
+
+def _crop_stamp(definition: TrainingDefinition, keys: Dict[Tuple[str, ...], List[ImageRef]]) -> dict:
+    """What the crops depend on: the keys, and rect + jitter (the jitter sets the margin kept around the rectangle)."""
+    return {
+        "keys": _keys_stamp(definition),
+        "keys_hash": _keys_hash(keys),
+        "rect": list(definition.rect),
+        "jitter": definition.jitter,
+    }
+
+
+def load_or_build_samples(definition: TrainingDefinition,
+                          keys: Dict[Tuple[str, ...], List[ImageRef]]) -> List[Sample]:
+    """build_samples, or the saved crops if crop.stamp matches the current TrainingDefinition and keys."""
+    output_dir = OUTPUT_DIR / definition.name
+    crops_path = output_dir / CROPS_FILE
+    stamp_path = output_dir / CROP_STAMP_FILE
+    stamp = _crop_stamp(definition, keys)
+
+    if crops_path.exists() and _stamp_matches(stamp_path, stamp):
+        try:
+            with np.load(crops_path, allow_pickle=False) as data:
+                crops, labels = data["crops"], data["labels"]
+                sample_keys, image_paths = data["keys"], data["image_paths"]
+                samples = [Sample(crops[i], str(labels[i]), tuple(json.loads(str(sample_keys[i]))), str(image_paths[i]))
+                           for i in range(len(labels))]
+            print(f"[{definition.name}] {len(samples)} crops loaded from {crops_path} ({CROP_STAMP_FILE} is up to date).")
+            return samples
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            print(f"[{definition.name}] Can't read the saved crops ({error}), cropping the images again.")
+    elif stamp_path.exists():
+        print(f"[{definition.name}] {CROP_STAMP_FILE} doesn't match the TrainingDefinition, cropping the images again.")
+
+    _remove_stamp(stamp_path)
+    samples = build_samples(definition, keys)
+    missing = sum(len(images) for images in keys.values()) - len(samples)
+    if not samples:
+        return samples
+    output_dir.mkdir(parents=True, exist_ok=True)
+    # All the crops of a TrainingDefinition have the same size: one array (N, H, W, 3).
+    with open(crops_path, "wb") as fp:
+        np.savez_compressed(
+            fp,
+            crops=np.stack([sample.crop_bgr for sample in samples]),
+            labels=np.array([sample.label for sample in samples]),
+            keys=np.array([json.dumps(list(sample.key)) for sample in samples]),
+            image_paths=np.array([sample.image_path for sample in samples]),
+        )
+    if missing:
+        # Some images were missing or unreadable: no stamp, the cropping is done again next time.
+        print(f"[{definition.name}] {missing} image(s) missing, {CROP_STAMP_FILE} not written.")
+        return samples
+    _write_stamp(stamp_path, stamp)
+    return samples
 
 
 # ---------------------------------------------------------------------------
@@ -559,7 +687,8 @@ def process_training(definition: TrainingDefinition) -> Optional[Path]:
           f"(label={definition.label}, sub_categories={definition.sub_categories}, rect={definition.rect})")
     keys = load_or_collect_keys(definition)
     print(f"[{definition.name}] {len(keys)} unique keys found.")
-    samples = build_samples(definition, keys)
+    download_images(definition, keys)
+    samples = load_or_build_samples(definition, keys)
     if len({sample.label for sample in samples}) < 2:
         print(f"[{definition.name}] Need at least 2 different labels to train, skipped.")
         return None
