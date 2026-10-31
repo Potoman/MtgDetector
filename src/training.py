@@ -15,11 +15,23 @@ For each training:
 3. The images of each key are downloaded if needed (download.download_if_not_exist).
 4. The rectangle is cropped. The crop is bound to the label value.
 5. A small PyTorch CNN classifier is trained on the crops and saved in
-   <root>/runs/classify/<name>/model.pt
+   <root>/runs/classify/<label>/<name>/<hash>/model.pt
 
-Steps 1-2, 3 and 4 are stamped in <root>/runs/classify/<name>/: key.stamp, download.stamp and
-crop.stamp. A step whose stamp matches the TrainingDefinition is skipped on the next launch.
-Delete a .stamp file to force its step (and the following ones) to run again.
+Files of a TrainingDefinition:
+  <root>/runs/classify/<label>/crops/          crops saved as PNG to check the rectangle (save_crops),
+                                               and the crops used by the training:
+                                               crops_<...>.npz + crops_<...>.stamp, shared by every
+                                               TrainingDefinition that crops the same way
+  <root>/runs/classify/<label>/<name>/<hash>/  one folder per training: training.json (the settings
+                                               of this training), keys.stamp, download.stamp,
+                                               keys.json, model.pt, samples.json
+  <hash> is computed on the TrainingDefinition fields that change the trained model (see
+  _training_fields): changing epochs, blur, shifts... gives a new folder, so every training
+  is kept. The same settings always give the same <hash>.
+
+Steps 1-2, 3 and 4 are stamped: keys.stamp, download.stamp and crops_<...>.stamp. A step whose stamp
+matches the TrainingDefinition is skipped on the next launch. Delete a .stamp file to force its
+step (and the following ones) to run again.
 
 Uses PyTorch only. Do not import TensorFlow (or modules that import it, such as
 algo_corner_detection, dataset or algo) from this file: loading TensorFlow and PyTorch in
@@ -30,6 +42,7 @@ Run from anywhere: python3 src/training.py
 import hashlib
 import json
 import random
+import shutil
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -48,6 +61,7 @@ import download
 ROOT = download.ROOT
 SCRYFALL_DIR = download.SCRYFALL_DIR
 OUTPUT_DIR = ROOT / "runs" / "classify"
+CROPS_PNG_DIR = "crops"  # Name of the PNG crops folder, in runs/classify/<label>/
 
 # Reference card size of the rectangle coordinates (size of a scryfall 'normal' image).
 CARD_WIDTH = 488
@@ -218,22 +232,105 @@ def collect_keys(definition: TrainingDefinition) -> Dict[Tuple[str, ...], List[I
     return dict(keys)
 
 
-# Stamps, in runs/classify/<name>/. Each one holds what its step depends on: if it matches the
+# Stamps, in runs/classify/<label>/<name>/. Each one holds what its step depends on: if it matches the
 # current TrainingDefinition, the step is skipped. Each stamp is removed before its step runs
 # and written last, so a step stopped in the middle is never seen as done.
-# - key.stamp: the TrainingDefinition fields used to list the keys (keys saved in keys.json).
+# - keys.stamp: the TrainingDefinition fields used to list the keys (keys saved in keys.json).
 # - download.stamp: the same fields + a hash of the keys. Only written if every image was
 #   downloaded, so failed downloads are retried at the next launch.
-# - crop.stamp: the same fields + a hash of the keys + rect and jitter, which change the crops
-#   (crops saved in crops.npz).
-# The hash of the keys makes download.stamp and crop.stamp invalid when the keys are collected
-# again and are different, even with the same fields (ex: new info.json files).
+# - crops_<...>.stamp, in runs/classify/<label>/crops/: the same fields + a hash of the keys +
+#   rect and jitter, which change the crops (crops saved in crops_<...>.npz next to it).
+#   The file name is built from these values (see _crops_base_name), so every TrainingDefinition
+#   that crops the same way uses the same files, whatever its name, shifts, blur, epochs...
+# The hash of the keys makes download.stamp and the crops stamp invalid when the keys are
+# collected again and are different, even with the same fields (ex: new info.json files).
 KEYS_FILE = "keys.json"
-KEY_STAMP_FILE = "key.stamp"
-OLD_KEY_STAMP_FILE = "done.stamp"  # Previous name of key.stamp, renamed automatically
+KEYS_STAMP_FILE = "keys.stamp"
+OLD_KEYS_STAMP_FILE = "done.stamp"  # Previous name of keys.stamp, renamed automatically
 DOWNLOAD_STAMP_FILE = "download.stamp"
-CROPS_FILE = "crops.npz"
-CROP_STAMP_FILE = "crop.stamp"
+
+
+def _label_dir(definition: TrainingDefinition) -> Path:
+    """runs/classify/<label>/"""
+    return OUTPUT_DIR / _safe(definition.label)
+
+
+def _name_dir(definition: TrainingDefinition) -> Path:
+    """runs/classify/<label>/<name>/: one <hash>/ folder per training."""
+    return _label_dir(definition) / definition.name
+
+
+TRAINING_FILE = "training.json"  # Settings of a training, in its <hash>/ folder
+
+
+def _training_fields(definition: TrainingDefinition) -> dict:
+    """
+    The TrainingDefinition fields that change the trained model, used for <hash>:
+    - the keys: label, sub_categories, and what selects the cards (exp_codes, accept, filters),
+    - samples_per_key, epochs, batch_size, blur_kernels, shift_pixels,
+    - rect, jitter (the crops), input_size, learning_rate, val_ratio.
+    Not used: name (already in the path) and save_crops (only writes the PNG check images).
+    """
+    return {
+        "label": definition.label,
+        "sub_categories": list(definition.sub_categories),
+        "exp_codes": definition.exp_codes,
+        "accept": {name: _as_list(values) for name, values in definition.accept.items()},
+        "filters": {name: _as_list(values) for name, values in definition.filters.items()},
+        "samples_per_key": definition.samples_per_key,
+        "epochs": definition.epochs,
+        "batch_size": definition.batch_size,
+        "blur_kernels": list(definition.blur_kernels),
+        "shift_pixels": definition.shift_pixels if isinstance(definition.shift_pixels, int) else list(definition.shift_pixels),
+        "rect": list(definition.rect),
+        "jitter": definition.jitter,
+        "input_size": definition.input_size,
+        "learning_rate": definition.learning_rate,
+        "val_ratio": definition.val_ratio,
+    }
+
+
+def _training_hash(definition: TrainingDefinition) -> str:
+    """First 10 characters of the hash of _training_fields."""
+    content = json.dumps(_training_fields(definition), sort_keys=True)
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()[:10]
+
+
+def _output_dir(definition: TrainingDefinition) -> Path:
+    """runs/classify/<label>/<name>/<hash>/: training.json, stamps, keys.json, model.pt, samples.json."""
+    return _name_dir(definition) / _training_hash(definition)
+
+
+def _crops_png_dir(definition: TrainingDefinition) -> Path:
+    """runs/classify/<label>/crops/: the PNG crops (save_crops)."""
+    return _label_dir(definition) / CROPS_PNG_DIR
+
+
+# Folders of previous versions: runs/classify/<name>/ and runs/classify/<label>/<name>/.
+def _old_dirs(definition: TrainingDefinition) -> List[Path]:
+    new_dir = _output_dir(definition)
+    return [d for d in (OUTPUT_DIR / definition.name, _name_dir(definition)) if d.is_dir() and d != new_dir]
+
+
+def _reuse_from_other_training(definition: TrainingDefinition, stamp_name: str, stamp: dict,
+                               data_files: List[str]) -> bool:
+    """
+    Copy a valid stamp (and its data files) from another training of the same label, so a new
+    <hash>/ folder (ex: only epochs changed) doesn't collect the keys or check the downloads again.
+    """
+    output_dir = _output_dir(definition)
+    for other_stamp in sorted(_label_dir(definition).glob(f"*/*/{stamp_name}")):
+        other_dir = other_stamp.parent
+        if other_dir == output_dir or not all((other_dir / f).is_file() for f in data_files):
+            continue
+        if _stamp_matches(other_stamp, stamp):
+            output_dir.mkdir(parents=True, exist_ok=True)
+            for file_name in data_files:
+                shutil.copy2(other_dir / file_name, output_dir / file_name)
+            shutil.copy2(other_stamp, output_dir / stamp_name)  # Stamp last
+            print(f"[{definition.name}] {stamp_name} reused from {other_dir}")
+            return True
+    return False
 
 
 def _stamp_matches(stamp_path: Path, stamp: dict) -> bool:
@@ -274,16 +371,19 @@ def _keys_stamp(definition: TrainingDefinition) -> dict:
 
 
 def load_or_collect_keys(definition: TrainingDefinition) -> Dict[Tuple[str, ...], List[ImageRef]]:
-    """collect_keys, or the saved keys if key.stamp matches the current TrainingDefinition."""
-    output_dir = OUTPUT_DIR / definition.name
+    """collect_keys, or the saved keys if keys.stamp matches the current TrainingDefinition."""
+    output_dir = _output_dir(definition)
     keys_path = output_dir / KEYS_FILE
-    stamp_path = output_dir / KEY_STAMP_FILE
+    stamp_path = output_dir / KEYS_STAMP_FILE
     stamp = _keys_stamp(definition)
 
     # Stamp written by a previous version under its old name: rename it once.
-    old_stamp_path = output_dir / OLD_KEY_STAMP_FILE
+    old_stamp_path = output_dir / OLD_KEYS_STAMP_FILE
     if old_stamp_path.exists() and not stamp_path.exists():
         old_stamp_path.rename(stamp_path)
+
+    if not (keys_path.exists() and _stamp_matches(stamp_path, stamp)):
+        _reuse_from_other_training(definition, KEYS_STAMP_FILE, stamp, [KEYS_FILE])
 
     if keys_path.exists() and _stamp_matches(stamp_path, stamp):
         try:
@@ -291,12 +391,12 @@ def load_or_collect_keys(definition: TrainingDefinition) -> Dict[Tuple[str, ...]
                 saved_keys = json.load(fp)
             keys = {tuple(entry["key"]): [ImageRef(**image) for image in entry["images"]]
                     for entry in saved_keys}
-            print(f"[{definition.name}] Keys loaded from {keys_path} ({KEY_STAMP_FILE} is up to date).")
+            print(f"[{definition.name}] Keys loaded from {keys_path} ({KEYS_STAMP_FILE} is up to date).")
             return keys
         except (OSError, ValueError, KeyError, TypeError) as error:
             print(f"[{definition.name}] Can't read the saved keys ({error}), collecting them again.")
     elif stamp_path.exists():
-        print(f"[{definition.name}] {KEY_STAMP_FILE} doesn't match the TrainingDefinition, collecting the keys again.")
+        print(f"[{definition.name}] {KEYS_STAMP_FILE} doesn't match the TrainingDefinition, collecting the keys again.")
 
     _remove_stamp(stamp_path)
     keys = collect_keys(definition)
@@ -323,8 +423,10 @@ def _download_stamp(definition: TrainingDefinition, keys: Dict[Tuple[str, ...], 
 
 def download_images(definition: TrainingDefinition, keys: Dict[Tuple[str, ...], List[ImageRef]]):
     """Download every image of the keys that is not on disk yet, unless download.stamp matches."""
-    stamp_path = OUTPUT_DIR / definition.name / DOWNLOAD_STAMP_FILE
+    stamp_path = _output_dir(definition) / DOWNLOAD_STAMP_FILE
     stamp = _download_stamp(definition, keys)
+    if not _stamp_matches(stamp_path, stamp):
+        _reuse_from_other_training(definition, DOWNLOAD_STAMP_FILE, stamp, [])
     if _stamp_matches(stamp_path, stamp):
         print(f"[{definition.name}] Images already downloaded ({DOWNLOAD_STAMP_FILE} is up to date).")
         return
@@ -381,7 +483,7 @@ class Sample:
 def build_samples(definition: TrainingDefinition,
                   keys: Dict[Tuple[str, ...], List[ImageRef]]) -> List[Sample]:
     margin_x, margin_y = _crop_margin(definition.rect, definition.jitter)
-    crops_dir = OUTPUT_DIR / definition.name / "crops"
+    crops_dir = _crops_png_dir(definition)
 
     samples: List[Sample] = []
     for index, (key, images) in enumerate(sorted(keys.items())):
@@ -402,7 +504,7 @@ def build_samples(definition: TrainingDefinition,
             samples.append(Sample(crop, key[0], key, str(expected_path)))
 
             if definition.save_crops:
-                label_dir = crops_dir / f"exp_{_safe(key[0])}"
+                label_dir = crops_dir / "exp" / f"exp_{_safe(key[0])}"
                 label_dir.mkdir(parents=True, exist_ok=True)
                 name = "_".join(_safe(v) for v in key[1:]) or "key"
                 cv2.imwrite(str(label_dir / f"{name}_{image.illustration_id[:8]}.png"),
@@ -424,13 +526,45 @@ def _crop_stamp(definition: TrainingDefinition, keys: Dict[Tuple[str, ...], List
     }
 
 
+def _number(value) -> str:
+    """436 -> '436', 430.5 -> '430.5', 0.1 -> '0.1'"""
+    return f"{value:g}"
+
+
+def _crops_base_name(definition: TrainingDefinition, stamp: dict) -> str:
+    """
+    Name of the crops files, built from everything used to make them:
+      crops_<label>_<sub_categories>_n<samples_per_key>_r<x>-<y>-<height>x<width>_j<jitter>_<hash>
+    ex: crops_set_rarity-colors_n10_r436-402-64x64_j0.1_3fa9c2d81e
+    exp_codes, accept, filters and the keys themselves are too long for a file name: they are
+    in <hash>, the first 10 characters of the hash of the whole stamp (also written in the
+    .stamp file in full). Two different stamps always give two different names.
+    """
+    rect = definition.rect
+    digest = hashlib.sha256(json.dumps(stamp, sort_keys=True).encode("utf-8")).hexdigest()[:10]
+    return "_".join([
+        "crops",
+        _safe(definition.label),
+        "-".join(_safe(name) for name in definition.sub_categories) or "none",
+        f"n{definition.samples_per_key}",
+        f"r{_number(rect.center_x)}-{_number(rect.center_y)}-{_number(rect.height)}x{_number(rect.width)}",
+        f"j{_number(definition.jitter)}",
+        digest,
+    ])
+
+
 def load_or_build_samples(definition: TrainingDefinition,
                           keys: Dict[Tuple[str, ...], List[ImageRef]]) -> List[Sample]:
-    """build_samples, or the saved crops if crop.stamp matches the current TrainingDefinition and keys."""
-    output_dir = OUTPUT_DIR / definition.name
-    crops_path = output_dir / CROPS_FILE
-    stamp_path = output_dir / CROP_STAMP_FILE
+    """
+    build_samples, or the saved crops if runs/classify/<label>/crops/crops_<...>.stamp matches the
+    current TrainingDefinition and keys. The crops files are shared by every TrainingDefinition
+    that crops the same way.
+    """
     stamp = _crop_stamp(definition, keys)
+    crops_dir = _crops_png_dir(definition)
+    base_name = _crops_base_name(definition, stamp)
+    crops_path = crops_dir / f"{base_name}.npz"
+    stamp_path = crops_dir / f"{base_name}.stamp"
 
     if crops_path.exists() and _stamp_matches(stamp_path, stamp):
         try:
@@ -439,19 +573,19 @@ def load_or_build_samples(definition: TrainingDefinition,
                 sample_keys, image_paths = data["keys"], data["image_paths"]
                 samples = [Sample(crops[i], str(labels[i]), tuple(json.loads(str(sample_keys[i]))), str(image_paths[i]))
                            for i in range(len(labels))]
-            print(f"[{definition.name}] {len(samples)} crops loaded from {crops_path} ({CROP_STAMP_FILE} is up to date).")
+            print(f"[{definition.name}] {len(samples)} crops loaded from {crops_path} ({stamp_path.name} is up to date).")
             return samples
         except (OSError, ValueError, KeyError, TypeError) as error:
             print(f"[{definition.name}] Can't read the saved crops ({error}), cropping the images again.")
-    elif stamp_path.exists():
-        print(f"[{definition.name}] {CROP_STAMP_FILE} doesn't match the TrainingDefinition, cropping the images again.")
+    else:
+        print(f"[{definition.name}] No saved crops for these settings ({base_name}), cropping the images.")
 
     _remove_stamp(stamp_path)
     samples = build_samples(definition, keys)
     missing = sum(len(images) for images in keys.values()) - len(samples)
     if not samples:
         return samples
-    output_dir.mkdir(parents=True, exist_ok=True)
+    crops_dir.mkdir(parents=True, exist_ok=True)
     # All the crops of a TrainingDefinition have the same size: one array (N, H, W, 3).
     with open(crops_path, "wb") as fp:
         np.savez_compressed(
@@ -463,7 +597,7 @@ def load_or_build_samples(definition: TrainingDefinition,
         )
     if missing:
         # Some images were missing or unreadable: no stamp, the cropping is done again next time.
-        print(f"[{definition.name}] {missing} image(s) missing, {CROP_STAMP_FILE} not written.")
+        print(f"[{definition.name}] {missing} image(s) missing, {stamp_path.name} not written.")
         return samples
     _write_stamp(stamp_path, stamp)
     return samples
@@ -661,7 +795,7 @@ def train_model(definition: TrainingDefinition, samples: List[Sample]) -> Path:
             accuracy = _evaluate(model, eval_loader, device)
             progress.set_postfix({"loss": f"{total_loss / max(total, 1):.4f}", acc_name: f"{accuracy:.3f}"})
 
-    output_dir = OUTPUT_DIR / definition.name
+    output_dir = _output_dir(definition)
     output_dir.mkdir(parents=True, exist_ok=True)
     model_path = output_dir / "model.pt"
     torch.save({
@@ -685,6 +819,14 @@ def train_model(definition: TrainingDefinition, samples: List[Sample]) -> Path:
 def process_training(definition: TrainingDefinition) -> Optional[Path]:
     print(f"===== Training '{definition.name}' "
           f"(label={definition.label}, sub_categories={definition.sub_categories}, rect={definition.rect})")
+    if definition.name == CROPS_PNG_DIR:
+        raise ValueError(f"A TrainingDefinition can't be named '{CROPS_PNG_DIR}': "
+                         f"runs/classify/<label>/{CROPS_PNG_DIR}/ is the PNG crops folder.")
+    output_dir = _output_dir(definition)
+    print(f"[{definition.name}] Training folder: {output_dir}")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    with open(output_dir / TRAINING_FILE, "w", encoding="utf-8") as fp:
+        json.dump({"name": definition.name, **_training_fields(definition)}, fp, indent=4)
     keys = load_or_collect_keys(definition)
     print(f"[{definition.name}] {len(keys)} unique keys found.")
     download_images(definition, keys)
@@ -716,8 +858,8 @@ def training():
             rect=Rect(center_x=436, center_y=402, height=64, width=64),
             accept={"frame": ["2015"], "layout": ["normal"]},
             filters={"type_line": ["Legendary Planeswalker", "Planeswalker"]},
-            samples_per_key=10,
-            epochs=10,
+            samples_per_key=4,
+            epochs=20,
             batch_size=32,
             blur_kernels=[3, 5],
             shift_pixels=[2, 4, 6],
