@@ -213,6 +213,63 @@ def collect_keys(definition: TrainingDefinition) -> Dict[Tuple[str, ...], List[I
     return dict(keys)
 
 
+# Stamp of collect_keys: runs/classify/<name>/keys.json holds the keys, done.stamp holds the
+# TrainingDefinition fields used to list them. If done.stamp matches the current fields,
+# keys.json is loaded instead of reading every info.json again.
+# Delete done.stamp to force a new collect (ex: after downloading new info.json files).
+KEYS_FILE = "keys.json"
+STAMP_FILE = "done.stamp"
+
+
+def _keys_stamp(definition: TrainingDefinition) -> dict:
+    """The TrainingDefinition fields that change the result of collect_keys."""
+    return {
+        "label": definition.label,
+        "sub_categories": list(definition.sub_categories),
+        "exp_codes": definition.exp_codes,
+        "accept": {name: _as_list(values) for name, values in definition.accept.items()},
+        "filters": {name: _as_list(values) for name, values in definition.filters.items()},
+        "samples_per_key": definition.samples_per_key,
+    }
+
+
+def load_or_collect_keys(definition: TrainingDefinition) -> Dict[Tuple[str, ...], List[ImageRef]]:
+    """collect_keys, or the saved keys if done.stamp matches the current TrainingDefinition."""
+    output_dir = OUTPUT_DIR / definition.name
+    keys_path = output_dir / KEYS_FILE
+    stamp_path = output_dir / STAMP_FILE
+    stamp = _keys_stamp(definition)
+
+    if stamp_path.exists() and keys_path.exists():
+        try:
+            with open(stamp_path, "r", encoding="utf-8") as fp:
+                saved_stamp = json.load(fp)
+            if saved_stamp == stamp:
+                with open(keys_path, "r", encoding="utf-8") as fp:
+                    saved_keys = json.load(fp)
+                keys = {tuple(entry["key"]): [ImageRef(**image) for image in entry["images"]]
+                        for entry in saved_keys}
+                print(f"[{definition.name}] Keys loaded from {keys_path} ({STAMP_FILE} is up to date).")
+                return keys
+            print(f"[{definition.name}] {STAMP_FILE} doesn't match the TrainingDefinition, collecting the keys again.")
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            print(f"[{definition.name}] Can't read the saved keys ({error}), collecting them again.")
+
+    keys = collect_keys(definition)
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    # The old stamp is removed first and the new one written last: if the program stops while
+    # writing keys.json, there is no valid stamp and the keys are collected again next time.
+    if stamp_path.exists():
+        stamp_path.unlink()
+    with open(keys_path, "w", encoding="utf-8") as fp:
+        json.dump([{"key": list(key), "images": [vars(image) for image in images]}
+                   for key, images in keys.items()], fp, indent=4)
+    with open(stamp_path, "w", encoding="utf-8") as fp:
+        json.dump(stamp, fp, indent=4)
+    return keys
+
+
 # ---------------------------------------------------------------------------
 # 2. Get the images and crop the rectangle
 # ---------------------------------------------------------------------------
@@ -500,7 +557,7 @@ def train_model(definition: TrainingDefinition, samples: List[Sample]) -> Path:
 def process_training(definition: TrainingDefinition) -> Optional[Path]:
     print(f"===== Training '{definition.name}' "
           f"(label={definition.label}, sub_categories={definition.sub_categories}, rect={definition.rect})")
-    keys = collect_keys(definition)
+    keys = load_or_collect_keys(definition)
     print(f"[{definition.name}] {len(keys)} unique keys found.")
     samples = build_samples(definition, keys)
     if len({sample.label for sample in samples}) < 2:
