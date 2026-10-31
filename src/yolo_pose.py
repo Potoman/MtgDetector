@@ -5,18 +5,134 @@ import it, such as algo_corner_detection, dataset or algo) from this file:
 loading TensorFlow and PyTorch in the same process can make their CUDA
 libraries clash.
 """
+import json
 import os
+import random
+from typing import List, Optional, Tuple, Union
 
 import cv2
 import tqdm
 from ultralytics import YOLO
 
-import card
+import download
 import noise
 
 
-def generate_yolo_pose_dataset(exp_code: str, count: int, val_ratio: float = 0.1) -> str:
-    output_dir = os.path.join("yolo_pose_dataset", exp_code, str(count))
+def _as_list(values) -> Optional[List[str]]:
+    """None -> None, "2015" -> ["2015"], ["2003", "2015"] -> ["2003", "2015"]"""
+    if values is None:
+        return None
+    return [values] if isinstance(values, str) else list(values)
+
+
+def _list_exp_codes(exp_code: Union[str, List[str]]) -> List[str]:
+    """'*' = every scryfall/exp_<code>/info.json, otherwise the given code(s)."""
+    if exp_code == "*":
+        return sorted(p.parent.name[len("exp_"):] for p in download.SCRYFALL_DIR.glob("exp_*/info.json"))
+    return _as_list(exp_code)
+
+
+def _image_path(exp_code: str, illustration_id: str):
+    """Where download.download_if_not_exist saves a card image: scryfall/exp_<code>/image/<id>.jpg"""
+    return download.SCRYFALL_DIR / f"exp_{exp_code}" / "image" / f"{illustration_id}.jpg"
+
+
+def select_card_images(count: int, exp_code: Union[str, List[str]] = "*", frame: Union[None, str, List[str]] = None,
+                       download_missing: bool = True) -> List[Tuple[str, str, str]]:
+    """
+    Choose `count` card images in the scryfall folder:
+    1. Every expansion of `exp_code` ('*' = all) with at least one card whose 'frame' is in
+       `frame` (None = any frame) belongs to the group. N = number of expansions in the group.
+    2. Each expansion of the group gives count / N images (the remainder goes to random
+       expansions of the group, one more image each), picked at random among its matching cards.
+       An expansion with fewer matching cards than its share repeats some of them.
+    3. Missing images are downloaded into scryfall/exp_<code>/image/ (download_missing=True).
+       With download_missing=False, only the images already in that folder are used.
+    :return: the selected images, shuffled: [(exp_code, illustration_id, image_path)]
+    """
+    frames = _as_list(frame)
+
+    # 1. The group: expansions with at least one matching card image.
+    candidates = {}
+    for code in _list_exp_codes(exp_code):
+        info_path = download.SCRYFALL_DIR / f"exp_{code}" / "info.json"
+        if not info_path.exists():
+            print(f"Missing {info_path}, expansion '{code}' skipped.")
+            continue
+        with open(info_path, "r", encoding="utf-8") as fp:
+            cards = json.load(fp)
+        images = []
+        for card in cards:
+            if frames is not None and card.get("frame") not in frames:
+                continue
+            for illustration_id, image_url, _ in download.get_card_images(card):
+                path = _image_path(code, illustration_id)
+                if image_url and (download_missing or path.exists()):
+                    images.append((card["id"], illustration_id))
+        if images:
+            candidates[code] = images
+    if not candidates:
+        raise ValueError(f"No card image found for exp_code={exp_code!r} and frame={frame!r}.")
+
+    # 2. count / N images per expansion.
+    group = sorted(candidates)
+    share, remainder = divmod(count, len(group))
+    extra = set(random.sample(group, remainder))
+    print(f"{len(group)} expansion(s) with frame {frames if frames else 'any'}: "
+          f"{share}{'-' + str(share + 1) if remainder else ''} image(s) each, {count} in total.")
+
+    # 3. Random pick in each expansion, downloading the missing images.
+    selected = []
+    with tqdm.tqdm(total=count, desc="Select card images", unit="image") as progress:
+        for code in group:
+            quota = share + (1 if code in extra else 0)
+            if quota == 0:
+                continue
+            pool = candidates[code][:]
+            random.shuffle(pool)
+            chosen = []
+            for card_id, illustration_id in pool:
+                if len(chosen) == quota:
+                    break
+                path = _image_path(code, illustration_id)
+                if not path.exists():
+                    paths = download.download_if_not_exist(code, card_id)
+                    if str(path) not in paths:
+                        continue  # Download failed: take another card
+                chosen.append((code, illustration_id, str(path)))
+                progress.update(1)
+            if not chosen:
+                print(f"No image available for expansion '{code}', its share is skipped.")
+                continue
+            # Not enough different cards: repeat some (each one is rendered with a different noise).
+            distinct = list(chosen)
+            while len(chosen) < quota:
+                chosen.append(random.choice(distinct))
+                progress.update(1)
+            selected.extend(chosen)
+    random.shuffle(selected)
+    return selected
+
+
+def _dataset_name(exp_code: Union[str, List[str]], frame: Union[None, str, List[str]]) -> str:
+    """Folder name of a dataset, without '*' (not allowed in Windows paths)."""
+    exp_part = "all" if exp_code == "*" else "-".join(_as_list(exp_code))
+    frames = _as_list(frame)
+    frame_part = "frame-" + "-".join(frames) if frames else "frame-any"
+    return f"{exp_part}_{frame_part}"
+
+
+def generate_yolo_pose_dataset(count: int, exp_code: Union[str, List[str]] = "*",
+                               frame: Union[None, str, List[str]] = None, val_ratio: float = 0.1,
+                               download_missing: bool = True) -> str:
+    """
+    :param count: number of images in the dataset (n)
+    :param exp_code: expansion code, a list of codes, or '*' for every expansion of the scryfall folder
+    :param frame: keep only the cards with this 'frame' (ex: "2015" or ["2003", "2015"]). None = any frame
+    :param val_ratio: part of the images used for the validation
+    :param download_missing: download the selected images missing from the scryfall folder
+    """
+    output_dir = os.path.join("yolo_pose_dataset", _dataset_name(exp_code, frame), str(count))
 
     val_count = int(count * val_ratio)
     train_count = count - val_count
@@ -32,13 +148,14 @@ def generate_yolo_pose_dataset(exp_code: str, count: int, val_ratio: float = 0.1
         return output_dir
 
     print(f"Generating dataset at {output_dir}...")
+    selected = select_card_images(count, exp_code, frame, download_missing)
     for split in ['train', 'val']:
         os.makedirs(os.path.join(output_dir, "images", split), exist_ok=True)
         os.makedirs(os.path.join(output_dir, "labels", split), exist_ok=True)
 
-    for i in tqdm.tqdm(range(count)):
+    for i, (code, illustration_id, image_path) in enumerate(tqdm.tqdm(selected, desc="Generate dataset", unit="image")):
         split = 'val' if i < val_count else 'train'
-        data, bgr = noise.get_noised_mtg_in_background(exp_code, card.get_illustration_id_random(exp_code))
+        data, bgr = noise.get_noised_mtg_in_background(code, illustration_id, image_path)
 
         img = cv2.resize(bgr, (400, 400))
         cv2.imwrite(os.path.join(output_dir, "images", split, f"{i}.jpg"), img)
@@ -82,8 +199,9 @@ def create_yolo_pose_yaml(output_dir: str) -> str:
     return yaml_path
 
 
-def train_yolo_pose():
-    output_dir = generate_yolo_pose_dataset("mrd", 2000)
+def train_yolo_pose(count: int = 2000, exp_code: Union[str, List[str]] = "*",
+                    frame: Union[None, str, List[str]] = None):
+    output_dir = generate_yolo_pose_dataset(count, exp_code, frame)
     yaml_path = create_yolo_pose_yaml(output_dir)
 
     model = YOLO("yolov8s-pose.pt")
@@ -121,4 +239,4 @@ def get_yolo_prediction(model, image_bgr: cv2.typing.MatLike) -> dict:
 
 
 if __name__ == '__main__':
-    train_yolo_pose()
+    train_yolo_pose(count=1000, frame="2015")

@@ -189,16 +189,18 @@ def show_noise():
     cv2.destroyAllWindows()
 
 
-def get_noised_mtg(exp_code: str, illustration_id: str, height: int = 680, width: int = 488) -> (Dict[str, int], cv2.typing.MatLike):
+def get_noised_mtg(exp_code: str, illustration_id: str, height: int = 680, width: int = 488,
+                   image_path: str = None) -> (Dict[str, int], cv2.typing.MatLike):
     """
     Generate a noised mtg image in a height x width rectangle.
     :param exp_code: expension code
     :param illustration_id: illustration id of the card we wanted
     :param height: height of the output imaage
     :param width: width of the output image
+    :param image_path: path of the card image. None = scryfall/exp_<exp_code>/image/<illustration_id>.jpg
     :return:
     """
-    mtg = crop.get_bgra_image(exp_code, illustration_id, height, width)
+    mtg = crop.get_bgra_image(exp_code, illustration_id, height, width, image_path)
     # Add distorsion :
     pixel_distorsion = 50
     x0 = int(random.randint(0, pixel_distorsion))
@@ -216,7 +218,8 @@ def get_noised_mtg(exp_code: str, illustration_id: str, height: int = 680, width
     return {'x0': x0, 'x1': x1, 'x2': x2, 'x3': x3, 'y0': y0, 'y1': y1, 'y2': y2, 'y3': y3}, twisted_image
 
 
-def get_noised_mtg_in_background(exp_code: str, illustration_id: str) -> (Dict[str, int], cv2.typing.MatLike):
+def get_noised_mtg_in_background(exp_code: str, illustration_id: str,
+                                  image_path: str = None) -> (Dict[str, int], cv2.typing.MatLike):
     select_background = random.randint(0, 1)
     if select_background == 0:
         r = random.randint(0, 255)
@@ -249,7 +252,7 @@ def get_noised_mtg_in_background(exp_code: str, illustration_id: str) -> (Dict[s
 
     if random.randint(0, 10) < 99:
         # We add a mtg image :
-        data, mtg = get_noised_mtg(exp_code, illustration_id)
+        data, mtg = get_noised_mtg(exp_code, illustration_id, image_path=image_path)
         # Add blur :
         kernel = random.choice(range(1, 12, 2))
         mtg = cv2.GaussianBlur(mtg, (kernel, kernel), 0)

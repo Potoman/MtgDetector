@@ -62,7 +62,7 @@ def get_card_images(card: dict, image_type: str = "normal") -> List[Tuple[str, s
 def download_expension(exp_code: str, image: bool):
     """Download all card images from a specific set"""
     # Create directory for images
-    exp_dir = Path("..") / "scryfall" / f"exp_{exp_code}"
+    exp_dir = Path("scryfall") / f"exp_{exp_code}"
     image_dir = exp_dir / "image"
     os.makedirs(image_dir, exist_ok=True)
 
