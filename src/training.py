@@ -29,6 +29,16 @@ Files of a TrainingDefinition:
   _training_fields): changing epochs, blur, shifts... gives a new folder, so every training
   is kept. The same settings always give the same <hash>.
 
+TrainingYoloDetect: same settings (except shift_pixels), but step 4-5 build a YOLO detection
+dataset and train an Ultralytics YOLO detector instead of the basic CNN. The detector answers
+"no symbol" (nothing found) or the label value of the symbol it found (ex: the expansion code),
+wherever the symbol is in a search window around the rectangle. Files:
+  <root>/runs/detect/<label>/<name>/<hash>/    training.json, keys.stamp, download.stamp, keys.json,
+                                               dataset/ (YOLO dataset + dataset.stamp), check/
+                                               (save_crops), yolo/ (Ultralytics run), model.pt,
+                                               detector.json
+The keys and downloads are shared with the TrainingDefinitions of the same label.
+
 Steps 1-2, 3 and 4 are stamped: keys.stamp, download.stamp and crops_<...>.stamp. A step whose stamp
 matches the TrainingDefinition is skipped on the next launch. Delete a .stamp file to force its
 step (and the following ones) to run again.
@@ -61,6 +71,7 @@ import download
 ROOT = download.ROOT
 SCRYFALL_DIR = download.SCRYFALL_DIR
 OUTPUT_DIR = ROOT / "runs" / "classify"
+DETECT_OUTPUT_DIR = ROOT / "runs" / "detect"  # TrainingYoloDetect
 CROPS_PNG_DIR = "crops"  # Name of the PNG crops folder, in runs/classify/<label>/
 
 # Reference card size of the rectangle coordinates (size of a scryfall 'normal' image).
@@ -108,6 +119,42 @@ class TrainingDefinition:
     # the border pixels. Each distance gives 8 more samples per sample:
     # [4] -> dataset x9, [3, 6, 9] -> dataset x25. Empty = no shifted copies.
     shift_pixels: List[int] = field(default_factory=list)
+
+
+@dataclass
+class TrainingYoloDetect:
+    """
+    Same settings as TrainingDefinition (see its comments), without shift_pixels: the model is a
+    YOLO detector (Ultralytics) instead of the basic CNN. It finds the symbol wherever it is in a
+    search window, so shifted copies are not needed.
+
+    Search window = the rectangle + `jitter` x its size on each side (rect 64x64, jitter 0.5 ->
+    window 128x128). In each training image the window is moved at random, so the symbol can be
+    anywhere in it (always fully visible). Windows cut where there is no symbol are added as
+    "nothing" images (background_ratio).
+    Answer of the model: nothing found = no symbol, otherwise the label value of the best box.
+    """
+    name: str                       # Output folder name: runs/detect/<label>/<name>
+    label: str                      # Card field to learn (ex: 'set'). One YOLO class per value
+    sub_categories: List[str]       # Card fields that influence the image (ex: ['rarity'])
+    rect: Rect                      # Area of the card where the symbol is (the box of the labels)
+    # --- Optional ---
+    exp_codes: Optional[List[str]] = None
+    accept: Dict[str, List[str]] = field(default_factory=dict)
+    filters: Dict[str, List[str]] = field(default_factory=dict)
+    samples_per_key: int = 1
+    input_size: int = 128           # YOLO imgsz (multiple of 32): the search window is resized to it
+    jitter: float = 0.5             # Search window margin on each side, as a fraction of the rect size
+    epochs: int = 100
+    batch_size: int = 32
+    learning_rate: float = 1e-3     # Initial learning rate of the AdamW optimizer (YOLO lr0)
+    val_ratio: float = 0.2          # Only applied to labels having at least 2 samples
+    save_crops: bool = True         # Save the windows with their box in <hash>/check/ to check the rect
+    # Gaussian blur kernel sizes (odd numbers). Each size adds one blurred copy of every image.
+    blur_kernels: List[int] = field(default_factory=list)
+    # --- YOLO only ---
+    model: str = "yolo26n.pt"       # Pretrained detector: <root>/<model> if it exists, else downloaded
+    background_ratio: float = 0.25  # Number of "nothing" images, as a fraction of the symbol images
 
 
 # ---------------------------------------------------------------------------
@@ -250,9 +297,14 @@ OLD_KEYS_STAMP_FILE = "done.stamp"  # Previous name of keys.stamp, renamed autom
 DOWNLOAD_STAMP_FILE = "download.stamp"
 
 
+def _output_root(definition) -> Path:
+    """runs/classify/ for a TrainingDefinition, runs/detect/ for a TrainingYoloDetect."""
+    return DETECT_OUTPUT_DIR if isinstance(definition, TrainingYoloDetect) else OUTPUT_DIR
+
+
 def _label_dir(definition: TrainingDefinition) -> Path:
-    """runs/classify/<label>/"""
-    return OUTPUT_DIR / _safe(definition.label)
+    """runs/classify/<label>/ (runs/detect/<label>/ for a TrainingYoloDetect)"""
+    return _output_root(definition) / _safe(definition.label)
 
 
 def _name_dir(definition: TrainingDefinition) -> Path:
@@ -270,8 +322,9 @@ def _training_fields(definition: TrainingDefinition) -> dict:
     - samples_per_key, epochs, batch_size, blur_kernels, shift_pixels,
     - rect, jitter (the crops), input_size, learning_rate, val_ratio.
     Not used: name (already in the path) and save_crops (only writes the PNG check images).
+    A TrainingYoloDetect has no shift_pixels, and adds its type, model and background_ratio.
     """
-    return {
+    fields = {
         "label": definition.label,
         "sub_categories": list(definition.sub_categories),
         "exp_codes": definition.exp_codes,
@@ -281,13 +334,19 @@ def _training_fields(definition: TrainingDefinition) -> dict:
         "epochs": definition.epochs,
         "batch_size": definition.batch_size,
         "blur_kernels": list(definition.blur_kernels),
-        "shift_pixels": definition.shift_pixels if isinstance(definition.shift_pixels, int) else list(definition.shift_pixels),
         "rect": list(definition.rect),
         "jitter": definition.jitter,
         "input_size": definition.input_size,
         "learning_rate": definition.learning_rate,
         "val_ratio": definition.val_ratio,
     }
+    if isinstance(definition, TrainingYoloDetect):
+        fields.update({"type": "yolo_detect", "model": definition.model,
+                       "background_ratio": definition.background_ratio})
+    else:
+        fields["shift_pixels"] = (definition.shift_pixels if isinstance(definition.shift_pixels, int)
+                                  else list(definition.shift_pixels))
+    return fields
 
 
 def _training_hash(definition: TrainingDefinition) -> str:
@@ -317,9 +376,12 @@ def _reuse_from_other_training(definition: TrainingDefinition, stamp_name: str, 
     """
     Copy a valid stamp (and its data files) from another training of the same label, so a new
     <hash>/ folder (ex: only epochs changed) doesn't collect the keys or check the downloads again.
+    Trainings of runs/classify/ and runs/detect/ share their keys and download stamps.
     """
     output_dir = _output_dir(definition)
-    for other_stamp in sorted(_label_dir(definition).glob(f"*/*/{stamp_name}")):
+    other_stamps = sorted(stamp for root in (OUTPUT_DIR, DETECT_OUTPUT_DIR)
+                          for stamp in (root / _safe(definition.label)).glob(f"*/*/{stamp_name}"))
+    for other_stamp in other_stamps:
         other_dir = other_stamp.parent
         if other_dir == output_dir or not all((other_dir / f).is_file() for f in data_files):
             continue
@@ -837,6 +899,309 @@ def process_training(definition: TrainingDefinition) -> Optional[Path]:
     return train_model(definition, samples)
 
 
+# ---------------------------------------------------------------------------
+# 5. YOLO detection (TrainingYoloDetect)
+# ---------------------------------------------------------------------------
+
+DATASET_DIR = "dataset"                 # YOLO dataset, in <hash>/
+DATASET_STAMP_FILE = "dataset.stamp"    # In <hash>/dataset/
+CLASSES_FILE = "classes.json"           # In <hash>/dataset/: class index -> label value
+CHECK_DIR = "check"                     # Windows with their box (save_crops), in <hash>/
+NOTHING_DIR = "_nothing"                # Check images of the "nothing" windows, in <hash>/check/
+DETECTOR_INFO_FILE = "detector.json"    # Next to model.pt: what the inference needs
+DATASET_SEED = 0                        # Same settings -> same dataset
+
+
+def _window_layout(rect: Rect, jitter: float) -> Tuple[Tuple[int, int, int, int], int, int, int, int]:
+    """
+    :return: (box, margin_x, margin_y, width, height): the rectangle box (x0, y0, x1, y1) in card
+             coordinates (rounded as crop_rect does), the margin added on each side, and the size
+             of the search window. The centered window starts at (box x0 - margin_x, box y0 - margin_y),
+             which is exactly crop_rect(card, rect, margin_x, margin_y).
+    """
+    margin_x, margin_y = _crop_margin(rect, jitter)
+    x0 = int(round(rect.center_x - rect.width / 2))
+    y0 = int(round(rect.center_y - rect.height / 2))
+    x1, y1 = x0 + int(round(rect.width)), y0 + int(round(rect.height))
+    return (x0, y0, x1, y1), margin_x, margin_y, x1 - x0 + 2 * margin_x, y1 - y0 + 2 * margin_y
+
+
+def _crop_window(card_bgr: np.ndarray, x0: int, y0: int, width: int, height: int) -> np.ndarray:
+    """Crop width x height pixels at (x0, y0) of a CARD_WIDTH x CARD_HEIGHT card. Pixels outside repeat the border."""
+    pad = max(0, -x0, -y0, x0 + width - CARD_WIDTH, y0 + height - CARD_HEIGHT)
+    if pad:
+        card_bgr = cv2.copyMakeBorder(card_bgr, pad, pad, pad, pad, cv2.BORDER_REPLICATE)
+    return card_bgr[y0 + pad:y0 + pad + height, x0 + pad:x0 + pad + width].copy()
+
+
+def _background_corner(rng: random.Random, box: Tuple[int, int, int, int], width: int,
+                       height: int) -> Optional[Tuple[int, int]]:
+    """
+    Top-left corner of a window inside the card that doesn't touch the symbol box. Half of the time
+    on the same rows as the box (ex: the rest of the type line, the hardest case), otherwise
+    anywhere on the card. None if no place was found.
+    """
+    bx0, by0, bx1, by1 = box
+    same_rows = rng.random() < 0.5
+    for _ in range(100):
+        x = rng.randint(0, CARD_WIDTH - width)
+        if same_rows:
+            y = rng.randint(max(0, by1 - height), min(CARD_HEIGHT - height, by0))
+        else:
+            y = rng.randint(0, CARD_HEIGHT - height)
+        if x + width <= bx0 or x >= bx1 or y + height <= by0 or y >= by1:
+            return x, y
+    return None
+
+
+@dataclass
+class DetectImage:
+    window_bgr: np.ndarray
+    label: Optional[str]                        # None = no symbol ("nothing")
+    box: Optional[Tuple[int, int, int, int]]    # Symbol (x0, y0, x1, y1) in the window, None if nothing
+    key: Tuple[str, ...]
+    image_path: str
+
+
+def build_detect_images(definition: TrainingYoloDetect, keys: Dict[Tuple[str, ...], List[ImageRef]],
+                        rng: random.Random) -> Tuple[List[DetectImage], int]:
+    """
+    One window per card image, moved at random so the symbol is anywhere in it (fully visible),
+    + background_ratio "nothing" windows cut from the same cards where there is no symbol.
+    :return: the images and the number of card images missing or unreadable.
+    """
+    box, margin_x, margin_y, width, height = _window_layout(definition.rect, definition.jitter)
+    bx0, by0, bx1, by1 = box
+    images: List[DetectImage] = []
+    missing = 0
+    pending_backgrounds = 0.0
+    for index, (key, refs) in enumerate(sorted(keys.items())):
+        print(f"[{definition.name}] Key {index + 1}/{len(keys)}: {key}")
+        for ref in refs:
+            path = _image_path(ref)
+            card_bgr = cv2.imread(str(path)) if path.exists() else None
+            if card_bgr is None:
+                print(f"  Image not available: {path}")
+                missing += 1
+                continue
+            card_bgr = cv2.resize(card_bgr, (CARD_WIDTH, CARD_HEIGHT), interpolation=cv2.INTER_LINEAR)
+
+            x = bx0 - margin_x + rng.randint(-margin_x, margin_x)
+            y = by0 - margin_y + rng.randint(-margin_y, margin_y)
+            images.append(DetectImage(_crop_window(card_bgr, x, y, width, height), key[0],
+                                      (bx0 - x, by0 - y, bx1 - x, by1 - y), key, str(path)))
+
+            pending_backgrounds += definition.background_ratio
+            while pending_backgrounds >= 1.0:
+                pending_backgrounds -= 1.0
+                corner = _background_corner(rng, box, width, height)
+                if corner is not None:
+                    images.append(DetectImage(_crop_window(card_bgr, *corner, width, height),
+                                              None, None, key, str(path)))
+    return images, missing
+
+
+def _split_detect(images: List[DetectImage], val_ratio: float,
+                  rng: random.Random) -> Tuple[List[DetectImage], List[DetectImage]]:
+    """Split per label ("nothing" is its own group) so that every label keeps at least one training image."""
+    by_label: Dict[Optional[str], List[DetectImage]] = defaultdict(list)
+    for image in images:
+        by_label[image.label].append(image)
+    train, val = [], []
+    for label in sorted(by_label, key=lambda value: (value is None, value or "")):
+        group = by_label[label]
+        rng.shuffle(group)
+        n_val = int(len(group) * val_ratio)
+        val.extend(group[:n_val])
+        train.extend(group[n_val:])
+    return train, val
+
+
+def _write_yolo_split(images: List[DetectImage], class_to_index: Dict[str, int], dataset_dir: Path,
+                      split: str, blur_kernels: List[int]) -> List[dict]:
+    """
+    Write images/<split>/*.png and labels/<split>/*.txt (YOLO format, empty file = nothing), with
+    one blurred copy of every image per kernel. The copies stay in the same split as their image.
+    :return: one entry per written image, for images.json.
+    """
+    image_dir = dataset_dir / "images" / split
+    label_dir = dataset_dir / "labels" / split
+    image_dir.mkdir(parents=True, exist_ok=True)
+    label_dir.mkdir(parents=True, exist_ok=True)
+    kernels = [None] + [kernel if kernel % 2 == 1 else kernel + 1 for kernel in blur_kernels]
+    entries = []
+    index = 0
+    for image in tqdm.tqdm(images, desc=f"Write {split}", unit="image"):
+        if image.label is None:
+            line = ""
+        else:
+            height, width = image.window_bgr.shape[:2]
+            x0, y0, x1, y1 = image.box
+            line = (f"{class_to_index[image.label]} {(x0 + x1) / 2 / width:.6f} {(y0 + y1) / 2 / height:.6f} "
+                    f"{(x1 - x0) / width:.6f} {(y1 - y0) / height:.6f}\n")
+        for kernel in kernels:
+            window = image.window_bgr if kernel is None else cv2.GaussianBlur(image.window_bgr, (kernel, kernel), 0)
+            name = f"{index:06d}"
+            cv2.imwrite(str(image_dir / f"{name}.png"), window)
+            with open(label_dir / f"{name}.txt", "w", encoding="utf-8") as fp:
+                fp.write(line)
+            entries.append({"file": f"images/{split}/{name}.png", "label": image.label, "box": image.box,
+                            "blur": kernel, "key": list(image.key), "image": image.image_path})
+            index += 1
+    return entries
+
+
+def _save_check_images(definition: TrainingYoloDetect, images: List[DetectImage]):
+    """<hash>/check/<label>/<sub_categories>_<id>.png: each window with its box, to check the rect."""
+    check_dir = _output_dir(definition) / CHECK_DIR
+    if check_dir.exists():
+        shutil.rmtree(check_dir)
+    for image in images:
+        window = image.window_bgr.copy()
+        if image.label is None:
+            folder = check_dir / NOTHING_DIR
+        else:
+            folder = check_dir / _safe(image.label)
+            x0, y0, x1, y1 = image.box
+            cv2.rectangle(window, (x0, y0), (x1 - 1, y1 - 1), (0, 255, 0), 1)
+        folder.mkdir(parents=True, exist_ok=True)
+        name = "_".join(_safe(v) for v in image.key[1:]) or "key"
+        cv2.imwrite(str(folder / f"{name}_{Path(image.image_path).stem[:8]}.png"), window)
+
+
+def _dataset_stamp(definition: TrainingYoloDetect, keys: Dict[Tuple[str, ...], List[ImageRef]]) -> dict:
+    """What the YOLO dataset depends on."""
+    return {
+        "keys": _keys_stamp(definition),
+        "keys_hash": _keys_hash(keys),
+        "rect": list(definition.rect),
+        "jitter": definition.jitter,
+        "blur_kernels": list(definition.blur_kernels),
+        "val_ratio": definition.val_ratio,
+        "background_ratio": definition.background_ratio,
+        "seed": DATASET_SEED,
+    }
+
+
+def load_or_build_detect_dataset(definition: TrainingYoloDetect,
+                                 keys: Dict[Tuple[str, ...], List[ImageRef]]) -> Optional[Tuple[Path, List[str]]]:
+    """
+    Build <hash>/dataset/ (YOLO format: data.yaml, images/, labels/, classes.json, images.json),
+    unless dataset.stamp matches the current TrainingYoloDetect and keys.
+    :return: (data.yaml path, classes), or None if there is no symbol image.
+    """
+    dataset_dir = _output_dir(definition) / DATASET_DIR
+    yaml_path = dataset_dir / "data.yaml"
+    classes_path = dataset_dir / CLASSES_FILE
+    stamp_path = dataset_dir / DATASET_STAMP_FILE
+    stamp = _dataset_stamp(definition, keys)
+
+    if yaml_path.exists() and classes_path.exists() and _stamp_matches(stamp_path, stamp):
+        with open(classes_path, "r", encoding="utf-8") as fp:
+            classes = json.load(fp)
+        print(f"[{definition.name}] YOLO dataset loaded from {dataset_dir} ({DATASET_STAMP_FILE} is up to date).")
+        return yaml_path, classes
+
+    if dataset_dir.exists():
+        shutil.rmtree(dataset_dir)  # Never mix images of two different settings
+    rng = random.Random(DATASET_SEED)
+    images, missing = build_detect_images(definition, keys, rng)
+    classes = sorted({image.label for image in images if image.label is not None})
+    if not classes:
+        return None
+    class_to_index = {name: i for i, name in enumerate(classes)}
+    n_nothing = sum(image.label is None for image in images)
+    print(f"[{definition.name}] {len(images) - n_nothing} symbol images ({len(classes)} classes), "
+          f"{n_nothing} nothing images: {dict(Counter(image.label or '<nothing>' for image in images))}")
+    if definition.save_crops:
+        _save_check_images(definition, images)
+
+    train, val = _split_detect(images, definition.val_ratio, rng)
+    entries = _write_yolo_split(train, class_to_index, dataset_dir, "train", definition.blur_kernels)
+    if val:
+        entries += _write_yolo_split(val, class_to_index, dataset_dir, "val", definition.blur_kernels)
+    else:
+        print(f"[{definition.name}] No validation split: the validation uses the training images.")
+    print(f"[{definition.name}] YOLO dataset: {sum(e['file'].startswith('images/train') for e in entries)} train, "
+          f"{sum(e['file'].startswith('images/val') for e in entries)} val images (with blurred copies).")
+
+    with open(yaml_path, "w", encoding="utf-8") as fp:
+        fp.write(f"path: {json.dumps(dataset_dir.resolve().as_posix())}\n"
+                 f"train: images/train\n"
+                 f"val: images/{'val' if val else 'train'}\n"
+                 f"nc: {len(classes)}\n"
+                 f"names:\n" + "".join(f"  {i}: {json.dumps(name)}\n" for i, name in enumerate(classes)))
+    with open(classes_path, "w", encoding="utf-8") as fp:
+        json.dump(classes, fp, indent=4)
+    with open(dataset_dir / "images.json", "w", encoding="utf-8") as fp:
+        json.dump(entries, fp, indent=4)
+    if missing:
+        # Some images were missing or unreadable: no stamp, the dataset is built again next time.
+        print(f"[{definition.name}] {missing} image(s) missing, {DATASET_STAMP_FILE} not written.")
+    else:
+        _write_stamp(stamp_path, stamp)
+    return yaml_path, classes
+
+
+def train_yolo_detect(definition: TrainingYoloDetect, yaml_path: Path, classes: List[str]) -> Path:
+    """Train the YOLO detector. Saved as <hash>/model.pt + <hash>/detector.json (the Ultralytics run is in <hash>/yolo/)."""
+    from ultralytics import YOLO  # Only needed to train or to detect
+
+    output_dir = _output_dir(definition)
+    local_weights = ROOT / definition.model
+    model = YOLO(str(local_weights) if local_weights.exists() else definition.model)
+    model.train(
+        data=str(yaml_path),
+        imgsz=definition.input_size,
+        epochs=definition.epochs,
+        batch=definition.batch_size,
+        optimizer="AdamW",              # With optimizer="auto", Ultralytics ignores lr0
+        lr0=definition.learning_rate,
+        project=str(output_dir),        # Absolute path: the run is in <hash>/yolo/
+        name="yolo",
+        exist_ok=True,
+        workers=0,
+        # The window comes from a straightened card: the symbol is never mirrored and its size
+        # only changes a little. translate / mosaic (Ultralytics defaults) move it around.
+        fliplr=0.0,
+        scale=0.2,
+    )
+
+    best_path = output_dir / "yolo" / "weights" / "best.pt"
+    model_path = output_dir / "model.pt"
+    shutil.copy2(best_path, model_path)
+    with open(output_dir / DETECTOR_INFO_FILE, "w", encoding="utf-8") as fp:
+        json.dump({
+            "label": definition.label,
+            "sub_categories": list(definition.sub_categories),
+            "classes": classes,
+            "rect": list(definition.rect),
+            "jitter": definition.jitter,
+            "input_size": definition.input_size,
+        }, fp, indent=4)
+    print(f"[{definition.name}] Model saved: {model_path}")
+    return model_path
+
+
+def process_yolo_detect_training(definition: TrainingYoloDetect) -> Optional[Path]:
+    print(f"===== YOLO detect training '{definition.name}' "
+          f"(label={definition.label}, sub_categories={definition.sub_categories}, rect={definition.rect})")
+    output_dir = _output_dir(definition)
+    print(f"[{definition.name}] Training folder: {output_dir}")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    with open(output_dir / TRAINING_FILE, "w", encoding="utf-8") as fp:
+        json.dump({"name": definition.name, **_training_fields(definition)}, fp, indent=4)
+    keys = load_or_collect_keys(definition)
+    print(f"[{definition.name}] {len(keys)} unique keys found.")
+    download_images(definition, keys)
+    dataset = load_or_build_detect_dataset(definition, keys)
+    if dataset is None:
+        print(f"[{definition.name}] No symbol image, skipped.")
+        return None
+    yaml_path, classes = dataset
+    return train_yolo_detect(definition, yaml_path, classes)
+
+
 def training():
     # Filter possibilities :
     # - "frame": ["2003", "2015"]
@@ -851,7 +1216,22 @@ def training():
         #            "set": },
         #),
         # Expansion, read on the same symbol. The symbol color depends on the rarity.
-        TrainingDefinition(
+        # Basic CNN (runs/classify/set/set/), replaced by the YOLO detector below. Uncomment to train it again.
+        #TrainingDefinition(
+        #    name="set",
+        #    label="set",
+        #    sub_categories=["rarity", "colors"],
+        #    rect=Rect(center_x=430, center_y=402, height=64, width=64),
+        #    accept={"frame": ["2015"], "layout": ["normal"]},
+        #    filters={"type_line": ["Legendary Planeswalker", "Planeswalker"]},
+        #    samples_per_key=1,
+        #    epochs=20,
+        #    batch_size=32,
+        #    blur_kernels=[3],
+        #    shift_pixels=[2, 4, 6, 8, 10, 12, 14 ,16],
+        #),
+        # Expansion with a YOLO detector (runs/detect/set/set/): "no symbol" or the expansion code.
+        TrainingYoloDetect(
             name="set",
             label="set",
             sub_categories=["rarity", "colors"],
@@ -859,15 +1239,17 @@ def training():
             accept={"frame": ["2015"], "layout": ["normal"]},
             filters={"type_line": ["Legendary Planeswalker", "Planeswalker"]},
             samples_per_key=1,
-            epochs=20,
+            epochs=100,
             batch_size=32,
             blur_kernels=[3],
-            shift_pixels=[2, 4, 6, 8, 10, 12, 14 ,16],
         ),
     ]
 
     for definition in definitions:
-        process_training(definition)
+        if isinstance(definition, TrainingYoloDetect):
+            process_yolo_detect_training(definition)
+        else:
+            process_training(definition)
 
 
 # ---------------------------------------------------------------------------
@@ -891,6 +1273,34 @@ def predict(bundle: dict, card_bgr: np.ndarray) -> Tuple[str, float]:
         probabilities = torch.softmax(bundle["model"](_to_tensor(crop, bundle["input_size"])[None]), dim=1)[0]
     index = int(probabilities.argmax())
     return bundle["classes"][index], float(probabilities[index])
+
+
+def load_detector(model_path) -> dict:
+    """Load a TrainingYoloDetect model: <hash>/model.pt and the detector.json next to it."""
+    from ultralytics import YOLO  # Only needed to train or to detect
+
+    model_path = Path(model_path)
+    with open(model_path.parent / DETECTOR_INFO_FILE, "r", encoding="utf-8") as fp:
+        bundle = json.load(fp)
+    bundle["rect"] = Rect(*bundle["rect"])
+    bundle["model"] = YOLO(str(model_path))
+    return bundle
+
+
+def detect(bundle: dict, card_bgr: np.ndarray, min_confidence: float = 0.25) -> Tuple[Optional[str], float]:
+    """
+    Look for the symbol in the search window of a straightened card (any size, it is resized to
+    CARD_WIDTH x CARD_HEIGHT).
+    :return: (label value, confidence) of the best box, or (None, 0.0) if no symbol was found.
+    """
+    card_bgr = cv2.resize(card_bgr, (CARD_WIDTH, CARD_HEIGHT), interpolation=cv2.INTER_LINEAR)
+    box, margin_x, margin_y, width, height = _window_layout(bundle["rect"], bundle["jitter"])
+    window = _crop_window(card_bgr, box[0] - margin_x, box[1] - margin_y, width, height)
+    result = bundle["model"](window, imgsz=bundle["input_size"], conf=min_confidence, verbose=False)[0]
+    if result.boxes is None or len(result.boxes) == 0:
+        return None, 0.0
+    best = int(result.boxes.conf.argmax())
+    return bundle["classes"][int(result.boxes.cls[best])], float(result.boxes.conf[best])
 
 
 if __name__ == "__main__":
