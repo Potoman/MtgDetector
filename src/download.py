@@ -60,31 +60,44 @@ def get_card_images(card: dict, image_type: str = "normal") -> List[Tuple[str, s
 
 
 def download_expension(exp_code: str, image: bool):
-    """Download all card images from a specific set"""
-    # Create directory for images
-    exp_dir = Path("scryfall") / f"exp_{exp_code}"
-    image_dir = exp_dir / "image"
-    os.makedirs(image_dir, exist_ok=True)
+    """
+    Save the cards of a set in <root>/scryfall/exp_<exp_code>/info.json (+ their missing images if `image`).
+    An existing info.json is reused, not downloaded again: delete it to get the latest data.
+    """
+    exp_dir = SCRYFALL_DIR / f"exp_{exp_code}"
+    info_path = exp_dir / "info.json"
 
-    # Set up pagination - Scryfall returns cards in pages
-    has_more = True
-    next_page_url = f"https://api.scryfall.com/cards/search?q=set:{exp_code}&unique=cards"
+    if info_path.exists():
+        print(f"{info_path} already exists, reused.")
+        with open(info_path, "r", encoding="utf-8") as fp:
+            cards = json.load(fp)
+    else:
+        cards = _search_cards(exp_code)
+        if not cards:
+            return 0  # No info.json: the set is tried again next time
+        os.makedirs(exp_dir, exist_ok=True)
+        with open(info_path, "w", encoding="utf-8") as fp:
+            json.dump(cards, fp, indent=4)
 
-    card_count = 0
-    page = 1
+    if image:
+        for card in cards:
+            download_card_images(exp_code, card)
+    return len(cards)
 
+
+def _search_cards(exp_code: str) -> List[dict]:
+    """Every card of a set from the scryfall search API (all pages). Empty list if the set has no card."""
     cards = []
-
-    # Process each page of results
-    while has_more:
+    next_page_url = f"https://api.scryfall.com/cards/search?q=set:{exp_code}&unique=cards"
+    page = 1
+    while next_page_url:
         print(f"Processing page {page}...")
         response = requests.get(next_page_url, headers=HEADERS)
 
-        # No card foundfor the expension code.
+        # No card found for the expension code.
         if response.status_code == 404:
-            has_more = False
             print(f"No cards found for this expension.")
-            continue
+            break
 
         # Check for rate limiting or errors
         if response.status_code != 200:
@@ -95,34 +108,12 @@ def download_expension(exp_code: str, image: bool):
 
         data = response.json()
         cards.extend(data.get("data", []))
-
-        if image:
-            # Process each card on the current page
-            for card in data.get("data", []):
-                card_count += 1
-                card_name = card["name"].replace("//", "_").replace(" ", "_")
-                image_type = "normal"  # Options include: small, normal, large, png, art_crop, border_crop
-
-                # Some cards have multiple faces (handled by get_card_images)
-                for illustration_id, image_url, _ in get_card_images(card, image_type):
-                    save_image(image_url, image_dir, f"{illustration_id}")
-
-                # Be nice to the API - don't flood it with requests
-                time.sleep(0.1)
-
-        # Check if there are more pages
-        has_more = data.get("has_more", False)
-        next_page_url = data.get("next_page", None)
+        next_page_url = data.get("next_page") if data.get("has_more") else None
 
         # Respect rate limits - pause between pages
         page += 1
         time.sleep(0.5)
-
-    with open(exp_dir / f'info.json', 'w+') as fp:
-        json.dump(cards, fp, indent=4)
-
-    print(f"Downloaded images for {card_count} cards from set {exp_code}")
-    return card_count
+    return cards
 
 
 def save_image(image_url, directory, filename):
@@ -156,13 +147,13 @@ def _get_card(exp_code: str, card_id: str) -> dict:
     return _cards_by_id[exp_code][card_id]
 
 
-def download_if_not_exist(exp_code: str, card_id: str) -> List[str]:
+def download_card_images(exp_code: str, card: dict) -> List[str]:
     """
     Download every image of a card (all faces for a double-faced card) that is not already
     in <root>/scryfall/exp_<exp_code>/image/<illustration_id>.jpg.
 
     :param exp_code: expension code (ex: 'mrd')
-    :param card_id: scryfall id of the card (the 'id' field in info.json)
+    :param card: scryfall json object of the card
     :return: the path of every image of the card available on disk (already present or just
              downloaded), in face order. A face whose download failed is not returned.
     """
@@ -170,7 +161,7 @@ def download_if_not_exist(exp_code: str, card_id: str) -> List[str]:
     os.makedirs(image_dir, exist_ok=True)
 
     paths = []
-    for illustration_id, image_url, _ in get_card_images(_get_card(exp_code, card_id)):
+    for illustration_id, image_url, _ in get_card_images(card):
         path = image_dir / f"{illustration_id}.jpg"
         if not path.exists():
             downloaded = save_image(image_url, image_dir, f"{illustration_id}")
@@ -180,6 +171,11 @@ def download_if_not_exist(exp_code: str, card_id: str) -> List[str]:
                 continue
         paths.append(str(path))
     return paths
+
+
+def download_if_not_exist(exp_code: str, card_id: str) -> List[str]:
+    """download_card_images for a card found by its scryfall id in <root>/scryfall/exp_<exp_code>/info.json."""
+    return download_card_images(exp_code, _get_card(exp_code, card_id))
 
 
 if __name__ == "__main__":
