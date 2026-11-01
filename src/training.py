@@ -56,7 +56,7 @@ import shutil
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, NamedTuple, Optional, Tuple
+from typing import Dict, List, NamedTuple, Optional, Tuple, Union
 
 import cv2
 import numpy as np
@@ -145,16 +145,26 @@ class TrainingYoloDetect:
     samples_per_key: int = 1
     input_size: int = 128           # YOLO imgsz (multiple of 32): the search window is resized to it
     jitter: float = 0.5             # Search window margin on each side, as a fraction of the rect size
-    epochs: int = 100
+    epochs: int = 25
     batch_size: int = 32
     learning_rate: float = 1e-3     # Initial learning rate of the AdamW optimizer (YOLO lr0)
     val_ratio: float = 0.2          # Only applied to labels having at least 2 samples
     save_crops: bool = True         # Save the windows with their box in <hash>/check/ to check the rect
     # Gaussian blur kernel sizes (odd numbers). Each size adds one blurred copy of every image.
     blur_kernels: List[int] = field(default_factory=list)
+    # Low resolution copies, like a small card seen by the webcam then straightened by reshape_card:
+    # each factor (0-1) adds one copy of every image shrunk by that factor, with a little noise and
+    # JPEG compression, then enlarged back to its size. Ex: [0.35, 0.45, 0.6]. Empty = no copies.
+    downscale: List[float] = field(default_factory=list)
     # --- YOLO only ---
     model: str = "yolo26n.pt"       # Pretrained detector: <root>/<model> if it exists, else downloaded
     background_ratio: float = 0.25  # Number of "nothing" images, as a fraction of the symbol images
+    workers: int = 4                # Processes preparing the images in parallel (0 = all in the main process)
+    patience: int = 10              # Stop when the validation score didn't improve for this many epochs
+    # Image cache (Ultralytics): False = read, decode and resize every image again at each epoch,
+    # "ram" = done once, the images are kept in memory (no disk access after), "disk" = done once,
+    # saved as .npy files next to the images.
+    cache: Union[bool, str] = False
 
 
 # ---------------------------------------------------------------------------
@@ -321,7 +331,8 @@ def _training_fields(definition: TrainingDefinition) -> dict:
     - the keys: label, sub_categories, and what selects the cards (exp_codes, accept, filters),
     - samples_per_key, epochs, batch_size, blur_kernels, shift_pixels,
     - rect, jitter (the crops), input_size, learning_rate, val_ratio.
-    Not used: name (already in the path) and save_crops (only writes the PNG check images).
+    Not used: name (already in the path), save_crops (only writes the PNG check images),
+    workers and cache (only change the speed).
     A TrainingYoloDetect has no shift_pixels, and adds its type, model and background_ratio.
     """
     fields = {
@@ -342,7 +353,9 @@ def _training_fields(definition: TrainingDefinition) -> dict:
     }
     if isinstance(definition, TrainingYoloDetect):
         fields.update({"type": "yolo_detect", "model": definition.model,
-                       "background_ratio": definition.background_ratio})
+                       "background_ratio": definition.background_ratio, "patience": definition.patience})
+        if definition.downscale:  # Only when used: the trainings without it keep their <hash>
+            fields["downscale"] = list(definition.downscale)
     else:
         fields["shift_pixels"] = (definition.shift_pixels if isinstance(definition.shift_pixels, int)
                                   else list(definition.shift_pixels))
@@ -939,13 +952,14 @@ def _background_corner(rng: random.Random, box: Tuple[int, int, int, int], width
     """
     Top-left corner of a window inside the card that doesn't touch the symbol box. Half of the time
     on the same rows as the box (ex: the rest of the type line, the hardest case), otherwise
-    anywhere on the card. None if no place was found.
+    anywhere on the card. A wide window may not fit on the same rows: then anywhere on the card.
+    None if no place was found.
     """
     bx0, by0, bx1, by1 = box
     same_rows = rng.random() < 0.5
-    for _ in range(100):
+    for attempt in range(100):
         x = rng.randint(0, CARD_WIDTH - width)
-        if same_rows:
+        if same_rows and attempt < 50:
             y = rng.randint(max(0, by1 - height), min(CARD_HEIGHT - height, by0))
         else:
             y = rng.randint(0, CARD_HEIGHT - height)
@@ -968,6 +982,8 @@ def build_detect_images(definition: TrainingYoloDetect, keys: Dict[Tuple[str, ..
     """
     One window per card image, moved at random so the symbol is anywhere in it (fully visible),
     + background_ratio "nothing" windows cut from the same cards where there is no symbol.
+    A card whose label value is empty (ex: a land has no mana cost '') has no symbol: its window is
+    a "nothing" image.
     :return: the images and the number of card images missing or unreadable.
     """
     box, margin_x, margin_y, width, height = _window_layout(definition.rect, definition.jitter)
@@ -988,8 +1004,11 @@ def build_detect_images(definition: TrainingYoloDetect, keys: Dict[Tuple[str, ..
 
             x = bx0 - margin_x + rng.randint(-margin_x, margin_x)
             y = by0 - margin_y + rng.randint(-margin_y, margin_y)
-            images.append(DetectImage(_crop_window(card_bgr, x, y, width, height), key[0],
-                                      (bx0 - x, by0 - y, bx1 - x, by1 - y), key, str(path)))
+            if key[0]:
+                images.append(DetectImage(_crop_window(card_bgr, x, y, width, height), key[0],
+                                          (bx0 - x, by0 - y, bx1 - x, by1 - y), key, str(path)))
+            else:
+                images.append(DetectImage(_crop_window(card_bgr, x, y, width, height), None, None, key, str(path)))
 
             pending_backgrounds += definition.background_ratio
             while pending_backgrounds >= 1.0:
@@ -1017,18 +1036,39 @@ def _split_detect(images: List[DetectImage], val_ratio: float,
     return train, val
 
 
+def _downscale_copy(window_bgr: np.ndarray, factor: float, rng: random.Random) -> np.ndarray:
+    """
+    The window as the webcam sees a small card: shrunk by `factor` (the sensor averages the pixels),
+    a little sensor noise, JPEG compression (quality 40-80), then enlarged back to its size as
+    reshape_card does. The symbol box doesn't move.
+    """
+    height, width = window_bgr.shape[:2]
+    small = cv2.resize(window_bgr, (max(1, round(width * factor)), max(1, round(height * factor))),
+                       interpolation=cv2.INTER_AREA)
+    noise = np.random.default_rng(rng.randrange(2 ** 32)).normal(0.0, 3.0, small.shape)
+    small = np.clip(small + noise, 0, 255).astype(np.uint8)
+    _, jpeg = cv2.imencode(".jpg", small, [cv2.IMWRITE_JPEG_QUALITY, rng.randint(40, 80)])
+    small = cv2.imdecode(jpeg, cv2.IMREAD_COLOR)
+    return cv2.resize(small, (width, height), interpolation=cv2.INTER_LINEAR)
+
+
 def _write_yolo_split(images: List[DetectImage], class_to_index: Dict[str, int], dataset_dir: Path,
-                      split: str, blur_kernels: List[int]) -> List[dict]:
+                      split: str, blur_kernels: List[int], downscale: List[float],
+                      rng: random.Random) -> List[dict]:
     """
     Write images/<split>/*.png and labels/<split>/*.txt (YOLO format, empty file = nothing), with
-    one blurred copy of every image per kernel. The copies stay in the same split as their image.
+    one blurred copy of every image per kernel and one low resolution copy per downscale factor.
+    The copies stay in the same split as their image.
     :return: one entry per written image, for images.json.
     """
     image_dir = dataset_dir / "images" / split
     label_dir = dataset_dir / "labels" / split
     image_dir.mkdir(parents=True, exist_ok=True)
     label_dir.mkdir(parents=True, exist_ok=True)
-    kernels = [None] + [kernel if kernel % 2 == 1 else kernel + 1 for kernel in blur_kernels]
+    # (kind, value): the image itself, then its copies.
+    variants = ([("original", None)]
+                + [("blur", kernel if kernel % 2 == 1 else kernel + 1) for kernel in blur_kernels]
+                + [("downscale", factor) for factor in downscale])
     entries = []
     index = 0
     for image in tqdm.tqdm(images, desc=f"Write {split}", unit="image"):
@@ -1039,14 +1079,21 @@ def _write_yolo_split(images: List[DetectImage], class_to_index: Dict[str, int],
             x0, y0, x1, y1 = image.box
             line = (f"{class_to_index[image.label]} {(x0 + x1) / 2 / width:.6f} {(y0 + y1) / 2 / height:.6f} "
                     f"{(x1 - x0) / width:.6f} {(y1 - y0) / height:.6f}\n")
-        for kernel in kernels:
-            window = image.window_bgr if kernel is None else cv2.GaussianBlur(image.window_bgr, (kernel, kernel), 0)
+        for kind, value in variants:
+            if kind == "blur":
+                window = cv2.GaussianBlur(image.window_bgr, (value, value), 0)
+            elif kind == "downscale":
+                window = _downscale_copy(image.window_bgr, value, rng)
+            else:
+                window = image.window_bgr
             name = f"{index:06d}"
             cv2.imwrite(str(image_dir / f"{name}.png"), window)
             with open(label_dir / f"{name}.txt", "w", encoding="utf-8") as fp:
                 fp.write(line)
             entries.append({"file": f"images/{split}/{name}.png", "label": image.label, "box": image.box,
-                            "blur": kernel, "key": list(image.key), "image": image.image_path})
+                            "blur": value if kind == "blur" else None,
+                            "downscale": value if kind == "downscale" else None,
+                            "key": list(image.key), "image": image.image_path})
             index += 1
     return entries
 
@@ -1080,6 +1127,7 @@ def _dataset_stamp(definition: TrainingYoloDetect, keys: Dict[Tuple[str, ...], L
         "val_ratio": definition.val_ratio,
         "background_ratio": definition.background_ratio,
         "seed": DATASET_SEED,
+        **({"downscale": list(definition.downscale)} if definition.downscale else {}),
     }
 
 
@@ -1102,6 +1150,8 @@ def load_or_build_detect_dataset(definition: TrainingYoloDetect,
         print(f"[{definition.name}] YOLO dataset loaded from {dataset_dir} ({DATASET_STAMP_FILE} is up to date).")
         return yaml_path, classes
 
+    if any(not 0 < factor < 1 for factor in definition.downscale):
+        raise ValueError(f"[{definition.name}] downscale factors must be between 0 and 1: {definition.downscale}")
     if dataset_dir.exists():
         shutil.rmtree(dataset_dir)  # Never mix images of two different settings
     rng = random.Random(DATASET_SEED)
@@ -1117,13 +1167,15 @@ def load_or_build_detect_dataset(definition: TrainingYoloDetect,
         _save_check_images(definition, images)
 
     train, val = _split_detect(images, definition.val_ratio, rng)
-    entries = _write_yolo_split(train, class_to_index, dataset_dir, "train", definition.blur_kernels)
+    entries = _write_yolo_split(train, class_to_index, dataset_dir, "train", definition.blur_kernels,
+                                definition.downscale, rng)
     if val:
-        entries += _write_yolo_split(val, class_to_index, dataset_dir, "val", definition.blur_kernels)
+        entries += _write_yolo_split(val, class_to_index, dataset_dir, "val", definition.blur_kernels,
+                                     definition.downscale, rng)
     else:
         print(f"[{definition.name}] No validation split: the validation uses the training images.")
     print(f"[{definition.name}] YOLO dataset: {sum(e['file'].startswith('images/train') for e in entries)} train, "
-          f"{sum(e['file'].startswith('images/val') for e in entries)} val images (with blurred copies).")
+          f"{sum(e['file'].startswith('images/val') for e in entries)} val images (with blurred / downscaled copies).")
 
     with open(yaml_path, "w", encoding="utf-8") as fp:
         fp.write(f"path: {json.dumps(dataset_dir.resolve().as_posix())}\n"
@@ -1160,7 +1212,9 @@ def train_yolo_detect(definition: TrainingYoloDetect, yaml_path: Path, classes: 
         project=str(output_dir),        # Absolute path: the run is in <hash>/yolo/
         name="yolo",
         exist_ok=True,
-        workers=0,
+        workers=definition.workers,
+        patience=definition.patience,
+        cache=definition.cache,
         # The window comes from a straightened card: the symbol is never mirrored and its size
         # only changes a little. translate / mosaic (Ultralytics defaults) move it around.
         fliplr=0.0,
@@ -1205,51 +1259,93 @@ def process_yolo_detect_training(definition: TrainingYoloDetect) -> Optional[Pat
 def training():
     # Filter possibilities :
     # - "frame": ["2003", "2015"]
+    # Same cards for every 2015-frame training: normal layout, planeswalkers excluded.
+    accept_2015 = {"frame": ["2015"], "layout": ["normal"]}
+    filters_2015 = {"type_line": ["Legendary Planeswalker", "Planeswalker"]}
     definitions = [
-        # Rarity, read on the expansion symbol. The symbol depends on the set.
-        #TrainingDefinition(
-        #    name="rarity",
-        #    label="rarity",
-        #    sub_categories=["set"],
-        #    rect=Rect(center_x=430, center_y=400, height=80, width=80),
-        #    accept={"frame": ["2003", "2015"],
-        #            "set": },
-        #),
-        # Expansion, read on the same symbol. The symbol color depends on the rarity.
-        # Basic CNN (runs/classify/set/set/), replaced by the YOLO detector below. Uncomment to train it again.
-        #TrainingDefinition(
-        #    name="set",
-        #    label="set",
-        #    sub_categories=["rarity", "colors"],
-        #    rect=Rect(center_x=430, center_y=402, height=64, width=64),
-        #    accept={"frame": ["2015"], "layout": ["normal"]},
-        #    filters={"type_line": ["Legendary Planeswalker", "Planeswalker"]},
-        #    samples_per_key=1,
-        #    epochs=20,
-        #    batch_size=32,
-        #    blur_kernels=[3],
-        #    shift_pixels=[2, 4, 6, 8, 10, 12, 14 ,16],
-        #),
         # Expansion with a YOLO detector (runs/detect/set/set/): "no symbol" or the expansion code.
+        # downscale: the symbol as seen by the webcam (about 35-60% of the scryfall resolution).
         TrainingYoloDetect(
             name="set",
             label="set",
             sub_categories=["rarity", "colors"],
             rect=Rect(center_x=430, center_y=402, height=64, width=64),
-            accept={"frame": ["2015"], "layout": ["normal"]},
-            filters={"type_line": ["Legendary Planeswalker", "Planeswalker"]},
+            accept=accept_2015,
+            filters=filters_2015,
             samples_per_key=1,
-            epochs=100,
+            epochs=25,
+            batch_size=32,
+            blur_kernels=[3],
+            downscale=[0.35, 0.45, 0.6],
+            cache="ram",  # About 0.8 GB: no slow /mnt/c read after the first epoch
+        ),
+        # Mana cost with a YOLO detector (runs/detect/mana_cost/mana_cost/): "no mana cost" or the cost,
+        # ex: '{1}{W}{W}'. Read at the top right of the card. Lands (no mana cost) are "nothing" images.
+        # One image per (mana cost, expansion): the frame and the art behind the cost change.
+        # Window 286x90 (jitter 0.25): input_size 288 keeps the symbols at full size.
+        TrainingYoloDetect(
+            name="mana_cost",
+            label="mana_cost",
+            sub_categories=["colors"],
+            rect=Rect(center_x=375, center_y=50, height=60, width=190),
+            accept=accept_2015,
+            filters=filters_2015,
+            samples_per_key=1,
+            input_size=288,
+            jitter=0.25,
+            epochs=25,
             batch_size=32,
             blur_kernels=[3],
         ),
+        # Expansion, read on the same symbol, with the basic CNN (runs/classify/set/set/).
+        # The symbol color depends on the rarity.
+        TrainingDefinition(
+            name="set",
+            label="set",
+            sub_categories=["rarity", "colors"],
+            rect=Rect(center_x=430, center_y=402, height=64, width=64),
+            accept=accept_2015,
+            filters=filters_2015,
+            samples_per_key=1,
+            epochs=20,
+            batch_size=32,
+            blur_kernels=[3],
+            shift_pixels=[2, 4, 6, 8, 10, 12, 14 ,16],
+        ),
+        # Rarity, read on the expansion symbol, with the basic CNN. The symbol depends on the set.
+        TrainingDefinition(
+            name="rarity",
+            label="rarity",
+            sub_categories=["set"],
+            rect=Rect(center_x=430, center_y=400, height=80, width=80),
+            accept={"frame": ["2003", "2015"]},
+        ),
     ]
 
-    for definition in definitions:
+    for definition in _choose_trainings(definitions):
         if isinstance(definition, TrainingYoloDetect):
             process_yolo_detect_training(definition)
         else:
             process_training(definition)
+
+
+def _choose_trainings(definitions: list) -> list:
+    """Ask which training(s) to run: a number, several numbers (1,3) or * for all."""
+    print("Trainings:")
+    for index, definition in enumerate(definitions, start=1):
+        kind = "YOLO detect" if isinstance(definition, TrainingYoloDetect) else "basic CNN"
+        print(f"  {index}. {definition.name:<10} label '{definition.label}', {kind}")
+    while True:
+        answer = input(f"Which training ? (1-{len(definitions)}, several: 1,3, all: *) : ").strip()
+        if answer == "*":
+            return definitions
+        try:
+            numbers = [int(part) for part in answer.split(",") if part.strip()]
+        except ValueError:
+            numbers = []
+        if numbers and all(1 <= number <= len(definitions) for number in numbers):
+            return [definitions[number - 1] for number in numbers]
+        print(f"'{answer}' is not a valid choice.")
 
 
 # ---------------------------------------------------------------------------
@@ -1287,20 +1383,31 @@ def load_detector(model_path) -> dict:
     return bundle
 
 
-def detect(bundle: dict, card_bgr: np.ndarray, min_confidence: float = 0.25) -> Tuple[Optional[str], float]:
+def search_window(bundle: dict) -> Tuple[int, int, int, int]:
+    """(x0, y0, x1, y1) of the search window of a detector, in CARD_WIDTH x CARD_HEIGHT card coordinates."""
+    box, margin_x, margin_y, width, height = _window_layout(bundle["rect"], bundle["jitter"])
+    x0, y0 = box[0] - margin_x, box[1] - margin_y
+    return x0, y0, x0 + width, y0 + height
+
+
+def detect(bundle: dict, card_bgr: np.ndarray, min_confidence: float = 0.25
+           ) -> Tuple[Optional[str], float, Optional[Tuple[int, int, int, int]]]:
     """
     Look for the symbol in the search window of a straightened card (any size, it is resized to
     CARD_WIDTH x CARD_HEIGHT).
-    :return: (label value, confidence) of the best box, or (None, 0.0) if no symbol was found.
+    :return: (label value, confidence, box) of the best box, the box (x0, y0, x1, y1) being in
+             CARD_WIDTH x CARD_HEIGHT card coordinates. (None, 0.0, None) if no symbol was found.
     """
     card_bgr = cv2.resize(card_bgr, (CARD_WIDTH, CARD_HEIGHT), interpolation=cv2.INTER_LINEAR)
-    box, margin_x, margin_y, width, height = _window_layout(bundle["rect"], bundle["jitter"])
-    window = _crop_window(card_bgr, box[0] - margin_x, box[1] - margin_y, width, height)
+    x0, y0, x1, y1 = search_window(bundle)
+    window = _crop_window(card_bgr, x0, y0, x1 - x0, y1 - y0)
     result = bundle["model"](window, imgsz=bundle["input_size"], conf=min_confidence, verbose=False)[0]
     if result.boxes is None or len(result.boxes) == 0:
-        return None, 0.0
+        return None, 0.0, None
     best = int(result.boxes.conf.argmax())
-    return bundle["classes"][int(result.boxes.cls[best])], float(result.boxes.conf[best])
+    bx0, by0, bx1, by1 = (int(round(v)) for v in result.boxes.xyxy[best].tolist())
+    return (bundle["classes"][int(result.boxes.cls[best])], float(result.boxes.conf[best]),
+            (bx0 + x0, by0 + y0, bx1 + x0, by1 + y0))
 
 
 if __name__ == "__main__":
