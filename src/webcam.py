@@ -1,5 +1,7 @@
 import json
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Dict, List
 
 import cv2
 import numpy as np
@@ -14,13 +16,12 @@ CARD_HEIGHT = 680
 
 ROOT = Path(__file__).resolve().parent.parent
 
-# Expansion classifier trained by training.py: runs/classify/<label>/<name>/<hash>/model.pt
-# (TrainingDefinition label="set", name="set"). Each training has its own <hash>/ folder:
-# by default the most recent model.pt is used. To use a specific training, set
-# SET_MODEL_PATH = SET_MODEL_DIR / "<hash>" / "model.pt".
+# Models trained by training.py: runs/<detect|classify>/<label>/<name>/<hash>/model.pt.
+# At launch, one model is chosen for each label (ex: 'set', 'mana_cost').
 # Only used with YOLO: training.py uses PyTorch, which must not be loaded with TensorFlow.
-SET_MODEL_DIR = ROOT / "runs" / "classify" / "set" / "set"
-SET_MODEL_PATH = None  # None = most recent model.pt in SET_MODEL_DIR/<hash>/
+YOLO_DETECT = "YOLO detect"   # TrainingYoloDetect
+BASIC_CNN = "basic CNN"       # TrainingDefinition
+MODEL_ROOTS = {YOLO_DETECT: ROOT / "runs" / "detect", BASIC_CNN: ROOT / "runs" / "classify"}
 # Below this confidence, the prediction is not printed.
 MIN_CONFIDENCE = 0.5
 
@@ -72,12 +73,61 @@ def get_expansion_name(exp_code):
     return _expansion_names[exp_code]
 
 
-def find_model(model_path, model_dir):
-    """model_path if given, otherwise the most recent model_dir/<hash>/model.pt (None if there is none)."""
-    if model_path is not None:
-        return model_path if Path(model_path).exists() else None
-    models = list(Path(model_dir).glob("*/model.pt"))
-    return max(models, key=lambda path: path.stat().st_mtime) if models else None
+@dataclass
+class ModelChoice:
+    label: str      # ex: 'set'
+    kind: str       # YOLO_DETECT or BASIC_CNN
+    path: Path      # runs/<detect|classify>/<label>/<name>/<hash>/model.pt
+
+    def describe(self) -> str:
+        """ex: 'YOLO detect  set/7fd31c9062  2026-11-01 07:27  100 epochs'"""
+        import datetime
+        date = datetime.datetime.fromtimestamp(self.path.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
+        text = f"{self.kind:<11}  {self.path.parent.parent.name}/{self.path.parent.name}  {date}"
+        try:
+            with open(self.path.parent / "training.json", "r", encoding="utf-8") as fp:
+                text += f"  {json.load(fp)['epochs']} epochs"
+        except (OSError, ValueError, KeyError):
+            pass
+        return text
+
+
+def list_models() -> Dict[str, List[ModelChoice]]:
+    """Every trained model, by label, the most recent first."""
+    models: Dict[str, List[ModelChoice]] = {}
+    for kind, root in MODEL_ROOTS.items():
+        for path in root.glob("*/*/*/model.pt"):
+            label = path.parent.parent.parent.name
+            models.setdefault(label, []).append(ModelChoice(label, kind, path))
+    for choices in models.values():
+        choices.sort(key=lambda choice: choice.path.stat().st_mtime, reverse=True)
+    return dict(sorted(models.items()))
+
+
+def choose_models() -> List[ModelChoice]:
+    """For each label, ask which model to use (Enter = the most recent, 0 = none)."""
+    models = list_models()
+    if not models:
+        print("No trained model found in runs/detect or runs/classify. Run 'python src/training.py' first.")
+    chosen = []
+    for label, choices in models.items():
+        print(f"Model for '{label}':")
+        for index, choice in enumerate(choices, start=1):
+            print(f"  {index}. {choice.describe()}")
+        print(f"  0. none (no '{label}' detection)")
+        while True:
+            answer = input("Which one ? (Enter = 1) : ").strip() or "1"
+            if answer.isdigit() and 0 <= int(answer) <= len(choices):
+                break
+            print(f"'{answer}' is not a valid choice.")
+        if int(answer) > 0:
+            chosen.append(choices[int(answer) - 1])
+    return chosen
+
+
+def describe_value(label, value):
+    """Text printed for a prediction: the expansion name for 'set', the value otherwise."""
+    return f"{get_expansion_name(value)} ({value})" if label == "set" else value
 
 
 def draw_rect(card_bgr, rect):
@@ -89,23 +139,32 @@ def draw_rect(card_bgr, rect):
     cv2.rectangle(card_bgr, (x0, y0), (x1, y1), (0, 255, 0), 1)
 
 
+def draw_detection(card_bgr, window, box):
+    """Draw the detector search window (gray) and the symbol it found (green) on the reshaped card."""
+    cv2.rectangle(card_bgr, window[:2], (window[2] - 1, window[3] - 1), (160, 160, 160), 1)
+    if box is not None:
+        cv2.rectangle(card_bgr, box[:2], (box[2] - 1, box[3] - 1), (0, 255, 0), 1)
+
+
 if __name__ == '__main__':
     # Import only the framework we need, so TensorFlow and PyTorch are never loaded together.
-    set_classifier = None
+    # label -> (kind, loaded model)
+    label_models = {}
     if use_yolo:
         import yolo_pose
         import training
+        for choice in choose_models():
+            if choice.kind == YOLO_DETECT:
+                bundle = training.load_detector(choice.path)
+            else:
+                bundle = training.load_classifier(choice.path)
+            label_models[choice.label] = (choice.kind, bundle)
+            print(f"'{choice.label}' model loaded: {choice.path} ({len(bundle['classes'])} classes).")
         model = yolo_pose.load_yolo_pose_model()
-        set_model_path = find_model(SET_MODEL_PATH, SET_MODEL_DIR)
-        if set_model_path is not None:
-            set_classifier = training.load_classifier(set_model_path)
-            print(f"Expansion model loaded: {set_model_path} ({len(set_classifier['classes'])} expansions).")
-        else:
-            print(f"No expansion model found in {SET_MODEL_DIR}. Run 'python src/training.py' first.")
     else:
         import algo_corner_detection
         model = algo_corner_detection.load_border_detection_model()
-        print("Expansion detection is only available with YOLO (use_yolo = True).")
+        print("Card information detection is only available with YOLO (use_yolo = True).")
 
     cap = cv2.VideoCapture(0)
 
@@ -114,8 +173,8 @@ if __name__ == '__main__':
         print("Cannot open camera")
         exit()
 
-    # Last expansion printed, so the console is not flooded with the same name every frame.
-    last_exp_code = None
+    # Last value printed for each label, so the console is not flooded with the same value every frame.
+    last_values = {}
 
     while True:
         # Capture frame-by-frame
@@ -144,14 +203,24 @@ if __name__ == '__main__':
         reshaped = reshape_card(prediction, image_bgr_cropped, scale_x, scale_y)
         if reshaped is None:
             reshaped = no_image()
-            last_exp_code = None
-        elif set_classifier is not None:
-            # Same rectangle as the training: it is saved in model.pt.
-            exp_code, confidence = training.predict(set_classifier, reshaped)
-            if confidence >= MIN_CONFIDENCE and exp_code != last_exp_code:
-                print(f"Expansion: {get_expansion_name(exp_code)} ({exp_code}) - {confidence:.0%}")
-                last_exp_code = exp_code
-            draw_rect(reshaped, set_classifier["rect"])
+            last_values.clear()
+        else:
+            # Every model reads the same clean card: the rectangles are drawn on `reshaped` only.
+            card = reshaped.copy()
+            for label, (kind, bundle) in label_models.items():
+                if kind == YOLO_DETECT:
+                    # Same search window as the training: it is saved in detector.json next to model.pt.
+                    value, confidence, box = training.detect(bundle, card, MIN_CONFIDENCE)
+                    draw_detection(reshaped, training.search_window(bundle), box)
+                else:
+                    # Same rectangle as the training: it is saved in model.pt.
+                    value, confidence = training.predict(bundle, card)
+                    if confidence < MIN_CONFIDENCE:
+                        value = None
+                    draw_rect(reshaped, bundle["rect"])
+                if value is not None and value != last_values.get(label):
+                    print(f"{label}: {describe_value(label, value)} - {confidence:.0%}")
+                    last_values[label] = value
 
         cv2.imshow('Original', image_bgr)
         cv2.imshow('Resized', image_bgr_resized)
