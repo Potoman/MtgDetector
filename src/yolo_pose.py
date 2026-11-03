@@ -8,6 +8,7 @@ libraries clash.
 import json
 import os
 import random
+from pathlib import Path
 from typing import List, Optional, Tuple, Union
 
 import cv2
@@ -15,7 +16,14 @@ import tqdm
 from ultralytics import YOLO
 
 import download
+import local_paths
 import noise
+
+# Card corner model, in runs_dir (where it is trained) and in <root>/runs (published for webcam.py).
+POSE_MODEL = Path("pose") / "card_corners" / "weights" / "best.pt"
+POSE_PUBLISHED_FILES = ["args.yaml", "results.csv", "*.png", "*.jpg", "weights/best.pt"]
+# Where the model was trained before local_paths.py (relative project of Ultralytics).
+LEGACY_POSE_MODEL = local_paths.ROOT / "runs" / "pose" / "runs" / "pose" / "card_corners" / "weights" / "best.pt"
 
 
 def _as_list(values) -> Optional[List[str]]:
@@ -132,7 +140,7 @@ def generate_yolo_pose_dataset(count: int, exp_code: Union[str, List[str]] = "*"
     :param val_ratio: part of the images used for the validation
     :param download_missing: download the selected images missing from the scryfall folder
     """
-    output_dir = os.path.join("yolo_pose_dataset", _dataset_name(exp_code, frame), str(count))
+    output_dir = os.path.join(local_paths.RUNS_DIR, "yolo_pose_dataset", _dataset_name(exp_code, frame), str(count))
 
     val_count = int(count * val_ratio)
     train_count = count - val_count
@@ -211,15 +219,20 @@ def train_yolo_pose(count: int = 2000, exp_code: Union[str, List[str]] = "*",
         imgsz=400,
         batch=64,
         workers=0,
-        project="runs/pose",
+        project=str(local_paths.RUNS_DIR / "pose"),  # Absolute: the run is in <runs>/pose/card_corners/
         name="card_corners",
         exist_ok=True,
     )
+    local_paths.publish(local_paths.RUNS_DIR / "pose" / "card_corners", POSE_PUBLISHED_FILES)
     return model
 
 
 def load_yolo_pose_model():
-    return YOLO("runs/pose/runs/pose/card_corners/weights/best.pt")
+    """The card corner model: trained here, else published into <root>/runs, else the one of the previous version."""
+    for path in (local_paths.RUNS_DIR / POSE_MODEL, local_paths.PUBLISH_DIR / POSE_MODEL, LEGACY_POSE_MODEL):
+        if path.exists():
+            return YOLO(str(path))
+    raise FileNotFoundError(f"No card corner model: train it first (yolo_pose.train_yolo_pose), {POSE_MODEL}")
 
 
 def get_yolo_prediction(model, image_bgr: cv2.typing.MatLike) -> dict:

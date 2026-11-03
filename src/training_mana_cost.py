@@ -20,7 +20,7 @@ training), with its own:
 - Answer of the model: the symbols found, joined from left to right: '{1}{W}{W}' (read_mana_cost).
 
 Files: runs/detect/mana_cost/<name>/<hash>/, as every TrainingYoloDetect (see training.py).
-Run from anywhere: python3 src/mana_cost_training.py (or from the menu of training.py)
+Run from anywhere: python3 src/training_mana_cost.py (menu of these trainings)
 """
 import hashlib
 import json
@@ -189,7 +189,7 @@ ALL_IMAGES = 1_000_000  # samples_per_key: no limit
 
 
 def definitions() -> List[ManaCostTraining]:
-    """The mana cost trainings, also listed in the menu of training.py."""
+    """The mana cost trainings, in the order of the menu."""
     return [
         # Read at the top right of the card. Lands (no mana cost) are "nothing" images. The rect is
         # the search window (jitter 0: same window for every card); translate moves it at random

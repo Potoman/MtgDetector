@@ -47,7 +47,15 @@ Uses PyTorch only. Do not import TensorFlow (or modules that import it, such as
 algo_corner_detection, dataset or algo) from this file: loading TensorFlow and PyTorch in
 the same process can make their CUDA libraries clash.
 
-Run from anywhere: python3 src/training.py
+The trainings are defined in the training_<...>.py files (ex: training_set.py), which reuse the
+steps of this one and are run from there. A training with its own way to choose the cards or to
+build its boxes subclasses TrainingYoloDetect (see extra_fields).
+
+Folders: <root>/scryfall and <root>/runs below are the defaults. In WSL, paths.json moves them to the
+Linux disk (much faster), and every trained model is then published into <root>/runs for webcam.py
+on Windows (see local_paths.py).
+
+Not run directly: run a training_<...>.py file (ex: python3 src/training_set.py).
 """
 import hashlib
 import json
@@ -67,12 +75,18 @@ from torch import nn
 from torch.utils.data import DataLoader, Dataset
 
 import download
+import local_paths
 
 
 ROOT = download.ROOT
 SCRYFALL_DIR = download.SCRYFALL_DIR
-OUTPUT_DIR = ROOT / "runs" / "classify"
-DETECT_OUTPUT_DIR = ROOT / "runs" / "detect"  # TrainingYoloDetect
+OUTPUT_DIR = local_paths.RUNS_DIR / "classify"
+DETECT_OUTPUT_DIR = local_paths.RUNS_DIR / "detect"  # TrainingYoloDetect
+# Files copied to <root>/runs for webcam.py when the trainings run elsewhere (see local_paths.publish):
+# what webcam.py reads, the small result files (curves, confusion matrix, balance), the model last.
+PUBLISHED_CLASSIFIER_FILES = ["training.json", "model.pt"]
+PUBLISHED_DETECTOR_FILES = ["training.json", "detector.json", "dataset/balance.json", "yolo/args.yaml",
+                            "yolo/results.csv", "yolo/*.png", "yolo/*.jpg", "model.pt"]
 CROPS_PNG_DIR = "crops"  # Name of the PNG crops folder, in runs/classify/<label>/
 
 # Reference card size of the rectangle coordinates (size of a scryfall 'normal' image).
@@ -88,34 +102,7 @@ class Rect(NamedTuple):
     width: float
 
 
-class SymbolBox(NamedTuple):
-    """
-    Box of a row of right-aligned symbols (ex: the mana cost), in pixel coordinates of a
-    CARD_WIDTH x CARD_HEIGHT card. The number of symbols n is the number of {...} in the label
-    value ('{0}{R}' -> 2): the box is n x symbol_width wide, and its right edge doesn't move.
-    """
-    symbol_width: float     # Width of one symbol (ex: 253 / 10)
-    height: float           # Height of the box
-    right: float            # Distance between the right edge of the box and the right border of the card
-    top: float              # Distance between the top of the box and the top of the card
-
-
-SYMBOL_PATTERN = re.compile(r"\{[^}]+\}")
-HYBRID_SYMBOL_PATTERN = re.compile(r"\{[A-Za-z0-9]+/[A-Za-z0-9]+\}")   # Hybrid mana, ex: {W/U}, {2/R}
-HYBRID_EXTRA_WIDTH = 6      # Extra width (pixels) of the box for each hybrid mana symbol
-
-
-def symbol_box_in_card(symbol_box: SymbolBox, value: str) -> Tuple[int, int, int, int]:
-    """(x0, y0, x1, y1) of the symbols of `value` in the card (see SymbolBox)."""
-    count = len(SYMBOL_PATTERN.findall(value))
-    if count == 0:
-        raise ValueError(f"No {{...}} symbol in {value!r}: symbol_box needs one per symbol")
-    hybrid_count = len(HYBRID_SYMBOL_PATTERN.findall(value))
-    x1 = CARD_WIDTH - symbol_box.right
-    y0 = symbol_box.top
-    width = count * symbol_box.symbol_width + hybrid_count * HYBRID_EXTRA_WIDTH
-    return (int(round(x1 - width)), int(round(y0)),
-            int(round(x1)), int(round(y0 + symbol_box.height)))
+Box = Tuple[int, int, int, int]  # (x0, y0, x1, y1)
 
 
 @dataclass
@@ -153,6 +140,11 @@ class TrainingDefinition:
     # [4] -> dataset x9, [3, 6, 9] -> dataset x25. Empty = no shifted copies.
     shift_pixels: List[int] = field(default_factory=list)
 
+    KIND = "basic CNN"  # Shown in the menu
+
+    def run(self) -> Optional[Path]:
+        return process_training(self)
+
 
 @dataclass
 class TrainingYoloDetect:
@@ -172,11 +164,6 @@ class TrainingYoloDetect:
     sub_categories: List[str]       # Card fields that influence the image (ex: ['rarity'])
     rect: Rect                      # Area of the card where the symbol is (the box of the labels)
     # --- Optional ---
-    # None = the box of every image is the rect. Otherwise one box per image, computed from its
-    # label value (see SymbolBox), ex: the mana cost '{2}{G}' -> a box 2 symbols wide. The rect
-    # stays the search area (same window for every card): it must contain the boxes, a box going
-    # out of the window is cut at its border (counted and printed).
-    symbol_box: Optional[SymbolBox] = None
     exp_codes: Optional[List[str]] = None
     accept: Dict[str, List[str]] = field(default_factory=dict)
     filters: Dict[str, List[str]] = field(default_factory=dict)
@@ -209,6 +196,24 @@ class TrainingYoloDetect:
     translate: float = 0.1          # Random shift, as a fraction of the image size (+/-)
     scale: float = 0.2              # Random zoom (+/-)
     mosaic: float = 1.0             # Probability to combine 4 images into one
+    # Albumentations transforms (pip install albumentations), redone at every epoch on the training
+    # images only, after mosaic: (name in the albumentations package, its parameters). Ex: webcam
+    # colors: [("ToGray", {"p": 0.4}), ("RGBShift", {"p": 0.5})]. Empty = the Ultralytics defaults
+    # (blur, gray, CLAHE at 1%, only if albumentations is installed).
+    augmentations: List[Tuple[str, dict]] = field(default_factory=list)
+
+    KIND = "YOLO detect"  # Shown in the menu
+
+    def extra_fields(self) -> dict:
+        """
+        Settings of a subclass that change its dataset / model: added to the
+        <hash> and to the dataset stamp. Empty here, so the <hash> of a plain TrainingYoloDetect
+        doesn't change.
+        """
+        return {}
+
+    def run(self) -> Optional[Path]:
+        return process_yolo_detect_training(self)
 
 
 # ---------------------------------------------------------------------------
@@ -306,6 +311,7 @@ def collect_keys(definition: TrainingDefinition) -> Dict[Tuple[str, ...], List[I
     """
     fields = [definition.label] + list(definition.sub_categories)
     keys: Dict[Tuple[str, ...], List[ImageRef]] = defaultdict(list)
+    seen: Dict[Tuple[str, ...], set] = defaultdict(set)  # Illustrations already in each key
 
     for exp_code in definition.exp_codes or list_exp_codes():
         info_path = SCRYFALL_DIR / f"exp_{exp_code}" / "info.json"
@@ -327,8 +333,8 @@ def collect_keys(definition: TrainingDefinition) -> Dict[Tuple[str, ...], List[I
                 if None in values:
                     continue  # The card doesn't have the label or a sub-category
                 images = keys[values]
-                if (len(images) < definition.samples_per_key
-                        and all(image.illustration_id != illustration_id for image in images)):
+                if len(images) < definition.samples_per_key and illustration_id not in seen[values]:
+                    seen[values].add(illustration_id)
                     images.append(ImageRef(exp_code, card["id"], illustration_id))
     return dict(keys)
 
@@ -377,7 +383,8 @@ def _training_fields(definition: TrainingDefinition) -> dict:
     - rect, jitter (the crops), input_size, learning_rate, val_ratio.
     Not used: name (already in the path), save_crops (only writes the PNG check images),
     workers and cache (only change the speed).
-    A TrainingYoloDetect has no shift_pixels, and adds its type, model and background_ratio.
+    A TrainingYoloDetect has no shift_pixels, and adds its type, model and background_ratio (and
+    translate, scale, mosaic, augmentations when they are not the default).
     """
     fields = {
         "label": definition.label,
@@ -400,12 +407,13 @@ def _training_fields(definition: TrainingDefinition) -> dict:
                        "background_ratio": definition.background_ratio, "patience": definition.patience})
         if definition.downscale:  # Only when used: the trainings without it keep their <hash>
             fields["downscale"] = list(definition.downscale)
-        if definition.symbol_box is not None:  # Only when used, as downscale
-            fields["symbol_box"] = list(definition.symbol_box)
+        fields.update(definition.extra_fields())  # Settings of a subclass
         # Only when changed: the trainings with the default augmentations keep their <hash>
         for name, default in (("translate", 0.1), ("scale", 0.2), ("mosaic", 1.0)):
             if getattr(definition, name) != default:
                 fields[name] = getattr(definition, name)
+        if definition.augmentations:  # Only when used, as above
+            fields["augmentations"] = [[name, dict(params)] for name, params in definition.augmentations]
     else:
         fields["shift_pixels"] = (definition.shift_pixels if isinstance(definition.shift_pixels, int)
                                   else list(definition.shift_pixels))
@@ -968,6 +976,7 @@ def train_model(definition: TrainingDefinition, samples: List[Sample]) -> Path:
     with open(output_dir / "samples.json", "w", encoding="utf-8") as fp:
         json.dump([{"key": list(s.key), "image": s.image_path} for s in samples], fp, indent=4)
     print(f"[{definition.name}] Model saved: {model_path}")
+    local_paths.publish(output_dir, PUBLISHED_CLASSIFIER_FILES)
     return model_path
 
 
@@ -1055,10 +1064,64 @@ def _background_corner(rng: random.Random, box: Tuple[int, int, int, int], width
 @dataclass
 class DetectImage:
     window_bgr: np.ndarray
-    label: Optional[str]                        # None = no symbol ("nothing")
-    box: Optional[Tuple[int, int, int, int]]    # Symbol (x0, y0, x1, y1) in the window, None if nothing
+    label: Optional[str]            # Label value of the card, None = no symbol ("nothing")
+    # (class, (x0, y0, x1, y1) in the window) of each box, empty if nothing. Here one box, class =
+    # label value. A subclass can give several boxes.
+    boxes: List[Tuple[str, Box]]
     key: Tuple[str, ...]
     image_path: str
+
+
+def read_card(image: ImageRef) -> Optional[np.ndarray]:
+    """The image of a card face, resized to CARD_WIDTH x CARD_HEIGHT. None if missing or unreadable."""
+    path = _image_path(image)
+    card_bgr = cv2.imread(str(path)) if path.exists() else None
+    if card_bgr is None:
+        print(f"  Image not available: {path}")
+        return None
+    return cv2.resize(card_bgr, (CARD_WIDTH, CARD_HEIGHT), interpolation=cv2.INTER_LINEAR)
+
+
+def random_window(definition: TrainingYoloDetect, rng: random.Random) -> Tuple[int, int]:
+    """Top-left corner (card coordinates) of the search window, moved at random by up to its margin (jitter)."""
+    box, margin_x, margin_y, _, _ = _window_layout(definition.rect, definition.jitter)
+    return (box[0] - margin_x + rng.randint(-margin_x, margin_x),
+            box[1] - margin_y + rng.randint(-margin_y, margin_y))
+
+
+def boxes_in_window(definition: TrainingYoloDetect, card_boxes: List[Tuple[str, Box]], x: int, y: int,
+                    value: str) -> Tuple[List[Tuple[str, Box]], bool]:
+    """
+    Move (class, box) from card coordinates into the window at (x, y).
+    :return: the boxes, and True if one of them goes out of the window (it is cut at its border).
+    :raise ValueError: a box is fully out of the window (`value` is only for the message).
+    """
+    _, _, _, width, height = _window_layout(definition.rect, definition.jitter)
+    window_boxes, cut = [], False
+    for name, (sx0, sy0, sx1, sy1) in card_boxes:
+        in_window = (max(0, sx0 - x), max(0, sy0 - y), min(width, sx1 - x), min(height, sy1 - y))
+        cut |= in_window != (sx0 - x, sy0 - y, sx1 - x, sy1 - y)
+        if in_window[2] <= in_window[0] or in_window[3] <= in_window[1]:
+            raise ValueError(f"[{definition.name}] The box of {name!r} in {value!r} is out of the "
+                             f"window: make the rect contain it")
+        window_boxes.append((name, in_window))
+    return window_boxes, cut
+
+
+def cut_window(definition: TrainingYoloDetect, card_bgr: np.ndarray, x: int, y: int) -> np.ndarray:
+    """The search window of the definition, with its top-left corner at (x, y)."""
+    _, _, _, width, height = _window_layout(definition.rect, definition.jitter)
+    return _crop_window(card_bgr, x, y, width, height)
+
+
+def background_image(definition: TrainingYoloDetect, card_bgr: np.ndarray, key: Tuple[str, ...], image_path: str,
+                     rng: random.Random) -> Optional["DetectImage"]:
+    """A "nothing" window of the card, where there is no symbol (see _background_corner). None if no place."""
+    box, _, _, width, height = _window_layout(definition.rect, definition.jitter)
+    corner = _background_corner(rng, box, width, height)
+    if corner is None:
+        return None
+    return DetectImage(_crop_window(card_bgr, *corner, width, height), None, [], key, image_path)
 
 
 def build_detect_images(definition: TrainingYoloDetect, keys: Dict[Tuple[str, ...], List[ImageRef]],
@@ -1066,56 +1129,44 @@ def build_detect_images(definition: TrainingYoloDetect, keys: Dict[Tuple[str, ..
     """
     One window per card image, moved at random so the symbol is anywhere in it (fully visible),
     + background_ratio "nothing" windows cut from the same cards where there is no symbol.
-    A card whose label value is empty (ex: a land has no mana cost '') has no symbol: its window is
-    a "nothing" image.
+    A card whose label value is empty has no symbol: its window is a "nothing" image.
     :return: the images and the number of card images missing or unreadable.
     """
-    box, margin_x, margin_y, width, height = _window_layout(definition.rect, definition.jitter)
-    bx0, by0, bx1, by1 = box
+    box, _, _, _, _ = _window_layout(definition.rect, definition.jitter)
     images: List[DetectImage] = []
     missing = 0
-    cut_values = Counter()  # symbol_box: label values whose box goes out of the window
+    cut_values = Counter()  # Label values whose box goes out of the window
     pending_backgrounds = 0.0
     for index, (key, refs) in enumerate(sorted(keys.items())):
         print(f"[{definition.name}] Key {index + 1}/{len(keys)}: {key}")
         for ref in refs:
-            path = _image_path(ref)
-            card_bgr = cv2.imread(str(path)) if path.exists() else None
+            card_bgr = read_card(ref)
             if card_bgr is None:
-                print(f"  Image not available: {path}")
                 missing += 1
                 continue
-            card_bgr = cv2.resize(card_bgr, (CARD_WIDTH, CARD_HEIGHT), interpolation=cv2.INTER_LINEAR)
-
-            x = bx0 - margin_x + rng.randint(-margin_x, margin_x)
-            y = by0 - margin_y + rng.randint(-margin_y, margin_y)
+            x, y = random_window(definition, rng)
+            window_boxes = []
             if key[0]:
-                if definition.symbol_box is None:
-                    sx0, sy0, sx1, sy1 = box
-                else:
-                    sx0, sy0, sx1, sy1 = symbol_box_in_card(definition.symbol_box, key[0])
-                in_window = (max(0, sx0 - x), max(0, sy0 - y), min(width, sx1 - x), min(height, sy1 - y))
-                if in_window != (sx0 - x, sy0 - y, sx1 - x, sy1 - y):
-                    cut_values[key[0]] += 1
-                if in_window[2] <= in_window[0] or in_window[3] <= in_window[1]:
-                    raise ValueError(f"[{definition.name}] The box of {key[0]!r} is out of the window: "
-                                     f"make the rect contain it")
-                images.append(DetectImage(_crop_window(card_bgr, x, y, width, height), key[0],
-                                          in_window, key, str(path)))
-            else:
-                images.append(DetectImage(_crop_window(card_bgr, x, y, width, height), None, None, key, str(path)))
+                window_boxes, cut = boxes_in_window(definition, [(key[0], box)], x, y, key[0])
+                cut_values[key[0]] += cut
+            images.append(DetectImage(cut_window(definition, card_bgr, x, y), key[0] or None, window_boxes,
+                                      key, str(_image_path(ref))))
 
             pending_backgrounds += definition.background_ratio
             while pending_backgrounds >= 1.0:
                 pending_backgrounds -= 1.0
-                corner = _background_corner(rng, box, width, height)
-                if corner is not None:
-                    images.append(DetectImage(_crop_window(card_bgr, *corner, width, height),
-                                              None, None, key, str(path)))
+                background = background_image(definition, card_bgr, key, str(_image_path(ref)), rng)
+                if background is not None:
+                    images.append(background)
+    print_cut_warning(definition, cut_values)
+    return images, missing
+
+
+def print_cut_warning(definition: TrainingYoloDetect, cut_values: Counter):
+    cut_values = +cut_values  # Drop the zeros
     if cut_values:
         print(f"[{definition.name}] WARNING: {sum(cut_values.values())} boxes go out of the window and are "
               f"cut at its border (make the rect wider to keep them whole): {dict(cut_values)}")
-    return images, missing
 
 
 def _split_detect(images: List[DetectImage], val_ratio: float,
@@ -1152,12 +1203,14 @@ def _downscale_copy(window_bgr: np.ndarray, factor: float, rng: random.Random) -
 
 def _write_yolo_split(images: List[DetectImage], class_to_index: Dict[str, int], dataset_dir: Path,
                       split: str, blur_kernels: List[int], downscale: List[float],
-                      rng: random.Random) -> List[dict]:
+                      rng: random.Random, copies: Optional[List[int]] = None) -> List[dict]:
     """
     Write images/<split>/*.png and labels/<split>/*.txt (YOLO format, empty file = nothing): one
     image per blur_kernels size (1 = the image itself, see _blur_variants) and one low resolution
     copy of the original image per downscale factor.
     The copies stay in the same split as their image.
+    copies: how many times each image is used by the training (see write_detect_dataset), saved
+    in its entries. None = once.
     :return: one entry per written image, for images.json.
     """
     image_dir = dataset_dir / "images" / split
@@ -1169,14 +1222,11 @@ def _write_yolo_split(images: List[DetectImage], class_to_index: Dict[str, int],
                 + [("downscale", factor) for factor in downscale])
     entries = []
     index = 0
-    for image in tqdm.tqdm(images, desc=f"Write {split}", unit="image"):
-        if image.label is None:
-            line = ""
-        else:
-            height, width = image.window_bgr.shape[:2]
-            x0, y0, x1, y1 = image.box
-            line = (f"{class_to_index[image.label]} {(x0 + x1) / 2 / width:.6f} {(y0 + y1) / 2 / height:.6f} "
-                    f"{(x1 - x0) / width:.6f} {(y1 - y0) / height:.6f}\n")
+    for image_index, image in enumerate(tqdm.tqdm(images, desc=f"Write {split}", unit="image")):
+        height, width = image.window_bgr.shape[:2]
+        line = "".join(f"{class_to_index[name]} {(x0 + x1) / 2 / width:.6f} {(y0 + y1) / 2 / height:.6f} "
+                       f"{(x1 - x0) / width:.6f} {(y1 - y0) / height:.6f}\n"
+                       for name, (x0, y0, x1, y1) in image.boxes)  # No box = empty file = nothing
         for kind, value in variants:
             if kind == "blur":
                 window = cv2.GaussianBlur(image.window_bgr, (value, value), 0)
@@ -1188,27 +1238,33 @@ def _write_yolo_split(images: List[DetectImage], class_to_index: Dict[str, int],
             cv2.imwrite(str(image_dir / f"{name}.png"), window)
             with open(label_dir / f"{name}.txt", "w", encoding="utf-8") as fp:
                 fp.write(line)
-            entries.append({"file": f"images/{split}/{name}.png", "label": image.label, "box": image.box,
+            entries.append({"file": f"images/{split}/{name}.png", "label": image.label,
+                            "boxes": [[box_class, list(box)] for box_class, box in image.boxes],
                             "blur": value if kind == "blur" else None,
                             "downscale": value if kind == "downscale" else None,
-                            "key": list(image.key), "image": image.image_path})
+                            "key": list(image.key), "image": image.image_path,
+                            **({"copies": copies[image_index]} if copies is not None else {})})
             index += 1
     return entries
 
 
 def _save_check_images(definition: TrainingYoloDetect, images: List[DetectImage]):
-    """<hash>/check/<label>/<sub_categories>_<id>.png: each window with its box, to check the rect."""
+    """
+    <hash>/check/<label>/<sub_categories>_<id>.png: each window with its box(es), to check the rect.
+    The boxes alternate green / magenta, so two neighbor symbols can be told apart.
+    """
     check_dir = _output_dir(definition) / CHECK_DIR
     if check_dir.exists():
         shutil.rmtree(check_dir)
-    for image in images:
+    for image in tqdm.tqdm(images, desc=f"[{definition.name}] Check images", unit="image"):
         window = image.window_bgr.copy()
         if image.label is None:
             folder = check_dir / NOTHING_DIR
         else:
             folder = check_dir / _safe(image.label)
-            x0, y0, x1, y1 = image.box
-            cv2.rectangle(window, (x0, y0), (x1 - 1, y1 - 1), (0, 255, 0), 1)
+            for index, (_, (x0, y0, x1, y1)) in enumerate(image.boxes):
+                color = (0, 255, 0) if index % 2 == 0 else (255, 0, 255)
+                cv2.rectangle(window, (x0, y0), (x1 - 1, y1 - 1), color, 1)
         folder.mkdir(parents=True, exist_ok=True)
         name = "_".join(_safe(v) for v in image.key[1:]) or "key"
         cv2.imwrite(str(folder / f"{name}_{Path(image.image_path).stem[:8]}.png"), window)
@@ -1226,81 +1282,157 @@ def _dataset_stamp(definition: TrainingYoloDetect, keys: Dict[Tuple[str, ...], L
         "background_ratio": definition.background_ratio,
         "seed": DATASET_SEED,
         **({"downscale": list(definition.downscale)} if definition.downscale else {}),
-        **({"symbol_box": list(definition.symbol_box)} if definition.symbol_box is not None else {}),
+        **definition.extra_fields(),
     }
 
 
-def load_or_build_detect_dataset(definition: TrainingYoloDetect,
-                                 keys: Dict[Tuple[str, ...], List[ImageRef]]) -> Optional[Tuple[Path, List[str]]]:
-    """
-    Build <hash>/dataset/ (YOLO format: data.yaml, images/, labels/, classes.json, images.json),
-    unless dataset.stamp matches the current TrainingYoloDetect and keys.
-    :return: (data.yaml path, classes), or None if there is no symbol image.
-    """
+def load_detect_dataset(definition: TrainingYoloDetect, stamp: dict) -> Optional[Tuple[Path, List[str]]]:
+    """(data.yaml path, classes) of <hash>/dataset/ if its dataset.stamp matches `stamp`, else None."""
     dataset_dir = _output_dir(definition) / DATASET_DIR
     yaml_path = dataset_dir / "data.yaml"
     classes_path = dataset_dir / CLASSES_FILE
-    stamp_path = dataset_dir / DATASET_STAMP_FILE
-    stamp = _dataset_stamp(definition, keys)
-
-    if yaml_path.exists() and classes_path.exists() and _stamp_matches(stamp_path, stamp):
+    if yaml_path.exists() and classes_path.exists() and _stamp_matches(dataset_dir / DATASET_STAMP_FILE, stamp):
         with open(classes_path, "r", encoding="utf-8") as fp:
             classes = json.load(fp)
         print(f"[{definition.name}] YOLO dataset loaded from {dataset_dir} ({DATASET_STAMP_FILE} is up to date).")
         return yaml_path, classes
+    return None
 
+
+def clear_detect_dataset(definition: TrainingYoloDetect) -> Path:
+    """Remove <hash>/dataset/ before building it again (never mix images of two settings). :return: its path."""
     if any(not 0 < factor < 1 for factor in definition.downscale):
         raise ValueError(f"[{definition.name}] downscale factors must be between 0 and 1: {definition.downscale}")
+    dataset_dir = _output_dir(definition) / DATASET_DIR
     if dataset_dir.exists():
-        shutil.rmtree(dataset_dir)  # Never mix images of two different settings
-    rng = random.Random(DATASET_SEED)
-    images, missing = build_detect_images(definition, keys, rng)
-    classes = sorted({image.label for image in images if image.label is not None})
+        shutil.rmtree(dataset_dir)
+    return dataset_dir
+
+
+def write_detect_dataset(definition: TrainingYoloDetect, stamp: dict, train: List[DetectImage],
+                         val: List[DetectImage], rng: random.Random, missing: int = 0,
+                         train_copies: Optional[List[int]] = None) -> Optional[Tuple[Path, List[str]]]:
+    """
+    Write <hash>/dataset/ (YOLO format: data.yaml, images/, labels/, classes.json, images.json) and
+    its dataset.stamp (not written if `missing` card images, so it is built again next time).
+    train_copies: how many times each training image is used (ex: [1, 1, 4] -> the 3rd one 4 times),
+    to balance the classes. The image is written once, train.txt lists it several times.
+    None = every image once (train: images/train).
+    :return: (data.yaml path, classes), or None if there is no box at all.
+    """
+    dataset_dir = _output_dir(definition) / DATASET_DIR
+    images = train + val
+    box_counts = Counter(name for image in images for name, _ in image.boxes)
+    classes = sorted(box_counts)
     if not classes:
         return None
     class_to_index = {name: i for i, name in enumerate(classes)}
-    n_nothing = sum(image.label is None for image in images)
-    print(f"[{definition.name}] {len(images) - n_nothing} symbol images ({len(classes)} classes), "
-          f"{n_nothing} nothing images: {dict(Counter(image.label or '<nothing>' for image in images))}")
+    n_nothing = sum(not image.boxes for image in images)
+    print(f"[{definition.name}] {len(images) - n_nothing} symbol images, {sum(box_counts.values())} boxes "
+          f"({len(classes)} classes), {n_nothing} nothing images. Boxes per class: {dict(sorted(box_counts.items()))}")
     if definition.save_crops:
         _save_check_images(definition, images)
 
-    train, val = _split_detect(images, definition.val_ratio, rng)
     entries = _write_yolo_split(train, class_to_index, dataset_dir, "train", definition.blur_kernels,
-                                definition.downscale, rng)
+                                definition.downscale, rng, train_copies)
+    train_entries = len(entries)
     if val:
         entries += _write_yolo_split(val, class_to_index, dataset_dir, "val", definition.blur_kernels,
                                      definition.downscale, rng)
     else:
         print(f"[{definition.name}] No validation split: the validation uses the training images.")
-    print(f"[{definition.name}] YOLO dataset: {sum(e['file'].startswith('images/train') for e in entries)} train, "
-          f"{sum(e['file'].startswith('images/val') for e in entries)} val images (with blurred / downscaled copies).")
+    train_source = "images/train"
+    if train_copies is not None:
+        # Ultralytics keeps the duplicated lines of a list file: an image listed n times is used n times.
+        train_source = "train.txt"
+        with open(dataset_dir / train_source, "w", encoding="utf-8") as fp:
+            for entry in entries[:train_entries]:
+                fp.write(f"./{entry['file']}\n" * entry["copies"])
+    n_train = sum(entry.get("copies", 1) for entry in entries[:train_entries])
+    print(f"[{definition.name}] YOLO dataset: {n_train} train ({train_entries} files), {len(entries) - train_entries} "
+          f"val images (with blurred / downscaled copies).")
 
-    with open(yaml_path, "w", encoding="utf-8") as fp:
+    with open(dataset_dir / "data.yaml", "w", encoding="utf-8") as fp:
         fp.write(f"path: {json.dumps(dataset_dir.resolve().as_posix())}\n"
-                 f"train: images/train\n"
+                 f"train: {train_source}\n"
                  f"val: images/{'val' if val else 'train'}\n"
                  f"nc: {len(classes)}\n"
                  f"names:\n" + "".join(f"  {i}: {json.dumps(name)}\n" for i, name in enumerate(classes)))
-    with open(classes_path, "w", encoding="utf-8") as fp:
+    with open(dataset_dir / CLASSES_FILE, "w", encoding="utf-8") as fp:
         json.dump(classes, fp, indent=4)
     with open(dataset_dir / "images.json", "w", encoding="utf-8") as fp:
         json.dump(entries, fp, indent=4)
     if missing:
-        # Some images were missing or unreadable: no stamp, the dataset is built again next time.
         print(f"[{definition.name}] {missing} image(s) missing, {DATASET_STAMP_FILE} not written.")
     else:
-        _write_stamp(stamp_path, stamp)
-    return yaml_path, classes
+        _write_stamp(dataset_dir / DATASET_STAMP_FILE, stamp)
+    return dataset_dir / "data.yaml", classes
 
 
-def train_yolo_detect(definition: TrainingYoloDetect, yaml_path: Path, classes: List[str]) -> Path:
-    """Train the YOLO detector. Saved as <hash>/model.pt + <hash>/detector.json (the Ultralytics run is in <hash>/yolo/)."""
+def load_or_build_detect_dataset(definition: TrainingYoloDetect,
+                                 keys: Dict[Tuple[str, ...], List[ImageRef]]) -> Optional[Tuple[Path, List[str]]]:
+    """
+    <hash>/dataset/ of a plain TrainingYoloDetect (one box per image), built unless dataset.stamp
+    matches the current definition and keys.
+    :return: (data.yaml path, classes), or None if there is no symbol image.
+    """
+    stamp = _dataset_stamp(definition, keys)
+    loaded = load_detect_dataset(definition, stamp)
+    if loaded is not None:
+        return loaded
+    clear_detect_dataset(definition)
+    rng = random.Random(DATASET_SEED)
+    images, missing = build_detect_images(definition, keys, rng)
+    if not any(image.boxes for image in images):
+        return None
+    train, val = _split_detect(images, definition.val_ratio, rng)
+    return write_detect_dataset(definition, stamp, train, val, rng, missing)
+
+
+def _albumentations(definition: TrainingYoloDetect) -> dict:
+    """
+    The `augmentations` argument of model.train() built from definition.augmentations ({} if empty).
+    Ultralytics silently skips them when albumentations is not installed: fail here instead.
+    """
+    if not definition.augmentations:
+        return {}
+    try:
+        import albumentations as A
+    except ImportError as error:
+        raise ImportError(f"[{definition.name}] 'augmentations' needs the albumentations package: "
+                          f"pip install albumentations") from error
+    return {"augmentations": [getattr(A, name)(**params) for name, params in definition.augmentations]}
+
+
+def _print_epoch_losses(trainer):
+    """
+    Ultralytics callback (on_fit_epoch_end): print the train and val losses after the validation line
+    of each epoch. The console only shows the train losses; otherwise the val losses are only in results.csv.
+    Val loss going up for several epochs while train loss goes down = overfitting.
+    """
+    val = {k: v for k, v in (trainer.metrics or {}).items() if k.startswith("val/")}
+    if trainer.tloss is None or not val:
+        return
+    train = trainer.label_loss_items(trainer.tloss, prefix="train")
+    print(f"\n  Epoch {trainer.epoch + 1} losses:")
+    for name, value in val.items():
+        loss = name.split("/", 1)[1]
+        print(f"    {loss:<10} train={float(train.get('train/' + loss, float('nan'))):.4f}   val={float(value):.4f}")
+
+
+def train_yolo_detect(definition: TrainingYoloDetect, yaml_path: Path, classes: List[str],
+                      extra_info: Optional[dict] = None) -> Path:
+    """
+    Train the YOLO detector. Saved as <hash>/model.pt + <hash>/detector.json (the Ultralytics run is
+    in <hash>/yolo/). extra_info: added to detector.json (what the inference of a subclass needs).
+    """
+    augmentations = _albumentations(definition)
     from ultralytics import YOLO  # Only needed to train or to detect
 
     output_dir = _output_dir(definition)
     local_weights = ROOT / definition.model
     model = YOLO(str(local_weights) if local_weights.exists() else definition.model)
+    model.add_callback("on_fit_epoch_end", _print_epoch_losses)
     model.train(
         data=str(yaml_path),
         imgsz=definition.input_size,
@@ -1319,6 +1451,7 @@ def train_yolo_detect(definition: TrainingYoloDetect, yaml_path: Path, classes: 
         translate=definition.translate,
         scale=definition.scale,
         mosaic=definition.mosaic,
+        **augmentations,
     )
 
     best_path = output_dir / "yolo" / "weights" / "best.pt"
@@ -1332,19 +1465,27 @@ def train_yolo_detect(definition: TrainingYoloDetect, yaml_path: Path, classes: 
             "rect": list(definition.rect),
             "jitter": definition.jitter,
             "input_size": definition.input_size,
+            **(extra_info or {}),
         }, fp, indent=4)
     print(f"[{definition.name}] Model saved: {model_path}")
+    local_paths.publish(output_dir, PUBLISHED_DETECTOR_FILES)
     return model_path
 
 
-def process_yolo_detect_training(definition: TrainingYoloDetect) -> Optional[Path]:
-    print(f"===== YOLO detect training '{definition.name}' "
+def start_training(definition: TrainingYoloDetect) -> Path:
+    """Print the training, create its <hash>/ folder and write training.json. :return: the folder."""
+    print(f"===== {definition.KIND} training '{definition.name}' "
           f"(label={definition.label}, sub_categories={definition.sub_categories}, rect={definition.rect})")
     output_dir = _output_dir(definition)
     print(f"[{definition.name}] Training folder: {output_dir}")
     output_dir.mkdir(parents=True, exist_ok=True)
     with open(output_dir / TRAINING_FILE, "w", encoding="utf-8") as fp:
         json.dump({"name": definition.name, **_training_fields(definition)}, fp, indent=4)
+    return output_dir
+
+
+def process_yolo_detect_training(definition: TrainingYoloDetect) -> Optional[Path]:
+    start_training(definition)
     keys = load_or_collect_keys(definition)
     print(f"[{definition.name}] {len(keys)} unique keys found.")
     download_images(definition, keys)
@@ -1356,90 +1497,11 @@ def process_yolo_detect_training(definition: TrainingYoloDetect) -> Optional[Pat
     return train_yolo_detect(definition, yaml_path, classes)
 
 
-def training():
-    # Filter possibilities :
-    # - "frame": ["2003", "2015"]
-    # Same cards for every 2015-frame training: normal layout, planeswalkers excluded.
-    accept_2015 = {"frame": ["2015"], "layout": ["normal"]}
-    filters_2015 = {"type_line": ["Legendary Planeswalker", "Planeswalker"]}
-    definitions = [
-        # Expansion with a YOLO detector (runs/detect/set/set/): "no symbol" or the expansion code.
-        # downscale: the symbol as seen by the webcam (about 35-60% of the scryfall resolution).
-        TrainingYoloDetect(
-            name="set",
-            label="set",
-            sub_categories=["rarity", "colors"],
-            rect=Rect(center_x=430, center_y=402, height=64, width=64),
-            accept=accept_2015,
-            filters=filters_2015,
-            samples_per_key=1,
-            epochs=25,
-            batch_size=32,
-            blur_kernels=[1, 3],
-            downscale=[0.35, 0.45, 0.6],
-            cache="ram",  # About 0.8 GB: no slow /mnt/c read after the first epoch
-        ),
-        # Mana cost with a YOLO detector (runs/detect/mana_cost/mana_cost/): "no mana cost" or the cost,
-        # ex: '{1}{W}{W}'. Read at the top right of the card. Lands (no mana cost) are "nothing" images.
-        # The rect is the search window (jitter 0: same window for every card). The box of each image
-        # only covers its symbols: n symbols -> n x 25.3 px wide, 28 px high, right edge 35 px from
-        # the right border, top 37 px from the top.
-        TrainingYoloDetect(
-            name="mana_cost",
-            label="mana_cost",
-            sub_categories=[],
-            rect=Rect(center_x=334, center_y=51, height=102, width=308),
-            symbol_box=SymbolBox(symbol_width=253 / 10, height=28, right=35, top=37),
-            accept={"frame": ["2003", "2015"], "layout": ["normal", "flip", "transform", "modal_dfc", "leveler"]},
-            filters=filters_2015,
-            samples_per_key=10,
-            input_size=320,
-            jitter=0.0,
-            epochs=25,
-            batch_size=32,
-            blur_kernels=[5, 7, 9],
-            cache="ram",  # About 0.8 GB: no slow /mnt/c read after the first epoch
-            translate=0.05,
-            mosaic=1.0,
-        ),
-        # Expansion, read on the same symbol, with the basic CNN (runs/classify/set/set/).
-        # The symbol color depends on the rarity.
-        TrainingDefinition(
-            name="set",
-            label="set",
-            sub_categories=["rarity", "colors"],
-            rect=Rect(center_x=430, center_y=402, height=64, width=64),
-            accept=accept_2015,
-            filters=filters_2015,
-            samples_per_key=1,
-            epochs=20,
-            batch_size=32,
-            blur_kernels=[1, 3],
-            shift_pixels=[2, 4, 6, 8, 10, 12, 14 ,16],
-        ),
-        # Rarity, read on the expansion symbol, with the basic CNN. The symbol depends on the set.
-        TrainingDefinition(
-            name="rarity",
-            label="rarity",
-            sub_categories=["set"],
-            rect=Rect(center_x=430, center_y=400, height=80, width=80),
-            accept={"frame": ["2003", "2015"]},
-        ),
-    ]
-
-    for definition in _choose_trainings(definitions):
-        if isinstance(definition, TrainingYoloDetect):
-            process_yolo_detect_training(definition)
-        else:
-            process_training(definition)
-
-
 def _choose_trainings(definitions: list) -> list:
     """Ask which training(s) to run: a number, several numbers (1,3) or * for all."""
     print("Trainings:")
     for index, definition in enumerate(definitions, start=1):
-        kind = "YOLO detect" if isinstance(definition, TrainingYoloDetect) else "basic CNN"
-        print(f"  {index}. {definition.name:<10} label '{definition.label}', {kind}")
+        print(f"  {index}. {definition.name:<10} label '{definition.label}', {definition.KIND}")
     while True:
         answer = input(f"Which training ? (1-{len(definitions)}, several: 1,3, all: *) : ").strip()
         if answer == "*":
@@ -1495,25 +1557,42 @@ def search_window(bundle: dict) -> Tuple[int, int, int, int]:
     return x0, y0, x0 + width, y0 + height
 
 
-def detect(bundle: dict, card_bgr: np.ndarray, min_confidence: float = 0.25
-           ) -> Tuple[Optional[str], float, Optional[Tuple[int, int, int, int]]]:
+def detect_boxes(bundle: dict, card_bgr: np.ndarray, min_confidence: float = 0.25,
+                 agnostic_nms: bool = False) -> List[Tuple[str, float, Box]]:
     """
-    Look for the symbol in the search window of a straightened card (any size, it is resized to
-    CARD_WIDTH x CARD_HEIGHT).
-    :return: (label value, confidence, box) of the best box, the box (x0, y0, x1, y1) being in
-             CARD_WIDTH x CARD_HEIGHT card coordinates. (None, 0.0, None) if no symbol was found.
+    Every box found in the search window of a straightened card (any size, it is resized to
+    CARD_WIDTH x CARD_HEIGHT), sorted from left to right.
+    :return: (class, confidence, box) of each box, the box (x0, y0, x1, y1) being in
+             CARD_WIDTH x CARD_HEIGHT card coordinates. Empty if nothing was found.
     """
     card_bgr = cv2.resize(card_bgr, (CARD_WIDTH, CARD_HEIGHT), interpolation=cv2.INTER_LINEAR)
     x0, y0, x1, y1 = search_window(bundle)
     window = _crop_window(card_bgr, x0, y0, x1 - x0, y1 - y0)
-    result = bundle["model"](window, imgsz=bundle["input_size"], conf=min_confidence, verbose=False)[0]
+    # agnostic_nms: two boxes of different classes on the same place keep only the best one.
+    result = bundle["model"](window, imgsz=bundle["input_size"], conf=min_confidence, verbose=False,
+                             agnostic_nms=agnostic_nms)[0]
     if result.boxes is None or len(result.boxes) == 0:
+        return []
+    found = []
+    for xyxy, cls, conf in zip(result.boxes.xyxy.tolist(), result.boxes.cls.tolist(), result.boxes.conf.tolist()):
+        bx0, by0, bx1, by1 = (int(round(v)) for v in xyxy)
+        found.append((bundle["classes"][int(cls)], float(conf), (bx0 + x0, by0 + y0, bx1 + x0, by1 + y0)))
+    return sorted(found, key=lambda item: item[2][0] + item[2][2])
+
+
+def detect(bundle: dict, card_bgr: np.ndarray, min_confidence: float = 0.25
+           ) -> Tuple[Optional[str], float, Optional[Box]]:
+    """
+    Look for the symbol in the search window of a straightened card (see detect_boxes).
+    :return: (label value, confidence, box) of the best box, in CARD_WIDTH x CARD_HEIGHT card
+             coordinates. (None, 0.0, None) if no symbol was found.
+    """
+    found = detect_boxes(bundle, card_bgr, min_confidence)
+    if not found:
         return None, 0.0, None
-    best = int(result.boxes.conf.argmax())
-    bx0, by0, bx1, by1 = (int(round(v)) for v in result.boxes.xyxy[best].tolist())
-    return (bundle["classes"][int(result.boxes.cls[best])], float(result.boxes.conf[best]),
-            (bx0 + x0, by0 + y0, bx1 + x0, by1 + y0))
+    return max(found, key=lambda item: item[1])
 
 
 if __name__ == "__main__":
-    training()
+    print("training.py holds the steps shared by the trainings. Run a training_<...>.py file instead "
+          "(ex: python3 src/training_set.py).")

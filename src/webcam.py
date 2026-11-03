@@ -16,7 +16,7 @@ CARD_HEIGHT = 680
 
 ROOT = Path(__file__).resolve().parent.parent
 
-# Models trained by training.py: runs/<detect|classify>/<label>/<name>/<hash>/model.pt.
+# Models trained by the training_<...>.py files: runs/<detect|classify>/<label>/<name>/<hash>/model.pt.
 # At launch, one model is chosen for each label (ex: 'set', 'mana_cost').
 # Only used with YOLO: training.py uses PyTorch, which must not be loaded with TensorFlow.
 YOLO_DETECT = "YOLO detect"   # TrainingYoloDetect
@@ -108,7 +108,7 @@ def choose_models() -> List[ModelChoice]:
     """For each label, ask which model to use (Enter = the most recent, 0 = none)."""
     models = list_models()
     if not models:
-        print("No trained model found in runs/detect or runs/classify. Run 'python src/training.py' first.")
+        print("No trained model found in runs/detect or runs/classify. Run a training first (ex: 'python src/training_set.py').")
     chosen = []
     for label, choices in models.items():
         print(f"Model for '{label}':")
@@ -157,7 +157,7 @@ if __name__ == '__main__':
     if use_yolo:
         import yolo_pose
         import training
-        import mana_cost_training
+        import training_mana_cost
         for choice in choose_models():
             if choice.kind == YOLO_DETECT:
                 bundle = training.load_detector(choice.path)
@@ -215,9 +215,9 @@ if __name__ == '__main__':
             for label, (kind, bundle) in label_models.items():
                 if kind == YOLO_DETECT:
                     # Same search window as the training: it is saved in detector.json next to model.pt.
-                    if mana_cost_training.is_mana_cost_detector(bundle):
+                    if training_mana_cost.is_mana_cost_detector(bundle):
                         # One box per mana symbol, joined into the mana cost: '{1}{W}{W}'.
-                        value, confidence, boxes = mana_cost_training.read_mana_cost(bundle, card, MIN_CONFIDENCE)
+                        value, confidence, boxes = training_mana_cost.read_mana_cost(bundle, card, MIN_CONFIDENCE)
                     else:
                         value, confidence, box = training.detect(bundle, card, MIN_CONFIDENCE)
                         boxes = [box] if box is not None else []
