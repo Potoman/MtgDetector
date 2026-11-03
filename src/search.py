@@ -21,9 +21,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional
 
+import local_paths
+
 # Project root (<root>), independent of the current working directory.
 ROOT = Path(__file__).resolve().parent.parent
-SCRYFALL_DIR = ROOT / "scryfall"
+SCRYFALL_DIR = local_paths.SCRYFALL_DIR  # <root>/scryfall unless paths.json says otherwise
 
 RARITIES = ["common", "uncommon", "rare", "mythic", "special", "bonus"]
 
