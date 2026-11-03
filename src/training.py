@@ -52,6 +52,7 @@ Run from anywhere: python3 src/training.py
 import hashlib
 import json
 import random
+import re
 import shutil
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
@@ -87,6 +88,36 @@ class Rect(NamedTuple):
     width: float
 
 
+class SymbolBox(NamedTuple):
+    """
+    Box of a row of right-aligned symbols (ex: the mana cost), in pixel coordinates of a
+    CARD_WIDTH x CARD_HEIGHT card. The number of symbols n is the number of {...} in the label
+    value ('{0}{R}' -> 2): the box is n x symbol_width wide, and its right edge doesn't move.
+    """
+    symbol_width: float     # Width of one symbol (ex: 253 / 10)
+    height: float           # Height of the box
+    right: float            # Distance between the right edge of the box and the right border of the card
+    top: float              # Distance between the top of the box and the top of the card
+
+
+SYMBOL_PATTERN = re.compile(r"\{[^}]+\}")
+HYBRID_SYMBOL_PATTERN = re.compile(r"\{[A-Za-z0-9]+/[A-Za-z0-9]+\}")   # Hybrid mana, ex: {W/U}, {2/R}
+HYBRID_EXTRA_WIDTH = 6      # Extra width (pixels) of the box for each hybrid mana symbol
+
+
+def symbol_box_in_card(symbol_box: SymbolBox, value: str) -> Tuple[int, int, int, int]:
+    """(x0, y0, x1, y1) of the symbols of `value` in the card (see SymbolBox)."""
+    count = len(SYMBOL_PATTERN.findall(value))
+    if count == 0:
+        raise ValueError(f"No {{...}} symbol in {value!r}: symbol_box needs one per symbol")
+    hybrid_count = len(HYBRID_SYMBOL_PATTERN.findall(value))
+    x1 = CARD_WIDTH - symbol_box.right
+    y0 = symbol_box.top
+    width = count * symbol_box.symbol_width + hybrid_count * HYBRID_EXTRA_WIDTH
+    return (int(round(x1 - width)), int(round(y0)),
+            int(round(x1)), int(round(y0 + symbol_box.height)))
+
+
 @dataclass
 class TrainingDefinition:
     name: str                       # Output folder name: runs/classify/<name>
@@ -111,8 +142,10 @@ class TrainingDefinition:
     learning_rate: float = 1e-3
     val_ratio: float = 0.2          # Only applied to labels having at least 2 samples
     save_crops: bool = True         # Save the crops in runs/classify/<name>/crops to check the rectangle
-    # Gaussian blur kernel sizes (odd numbers). Each size adds one blurred copy of every sample:
-    # [5] doubles the dataset, [3, 7] triples it. Empty = no blurred copies.
+    # Gaussian blur kernel sizes (odd numbers, an even size is rounded up). Empty = no blur, the
+    # samples are used as they are. Otherwise every sample is replaced by one copy per size, and
+    # 1 is the original sample (not blurred): [1, 5] doubles the dataset, [1, 3, 7] triples it,
+    # [3] only keeps the blurred copies (the originals are dropped).
     blur_kernels: List[int] = field(default_factory=list)
     # Shifted copies: for each distance of the list, every sample is moved by that many pixels
     # (card coordinates) in the 8 directions (straight and diagonal). The uncovered side repeats
@@ -139,6 +172,11 @@ class TrainingYoloDetect:
     sub_categories: List[str]       # Card fields that influence the image (ex: ['rarity'])
     rect: Rect                      # Area of the card where the symbol is (the box of the labels)
     # --- Optional ---
+    # None = the box of every image is the rect. Otherwise one box per image, computed from its
+    # label value (see SymbolBox), ex: the mana cost '{2}{G}' -> a box 2 symbols wide. The rect
+    # stays the search area (same window for every card): it must contain the boxes, a box going
+    # out of the window is cut at its border (counted and printed).
+    symbol_box: Optional[SymbolBox] = None
     exp_codes: Optional[List[str]] = None
     accept: Dict[str, List[str]] = field(default_factory=dict)
     filters: Dict[str, List[str]] = field(default_factory=dict)
@@ -150,7 +188,9 @@ class TrainingYoloDetect:
     learning_rate: float = 1e-3     # Initial learning rate of the AdamW optimizer (YOLO lr0)
     val_ratio: float = 0.2          # Only applied to labels having at least 2 samples
     save_crops: bool = True         # Save the windows with their box in <hash>/check/ to check the rect
-    # Gaussian blur kernel sizes (odd numbers). Each size adds one blurred copy of every image.
+    # Gaussian blur kernel sizes, as in TrainingDefinition: 1 = the original image. [1, 3] keeps
+    # every image and adds its blurred copy, [3] only keeps the blurred copies. The downscale
+    # copies are always made from the original image, with or without 1.
     blur_kernels: List[int] = field(default_factory=list)
     # Low resolution copies, like a small card seen by the webcam then straightened by reshape_card:
     # each factor (0-1) adds one copy of every image shrunk by that factor, with a little noise and
@@ -165,6 +205,10 @@ class TrainingYoloDetect:
     # "ram" = done once, the images are kept in memory (no disk access after), "disk" = done once,
     # saved as .npy files next to the images.
     cache: Union[bool, str] = False
+    # Ultralytics augmentations that move the symbol, redone at every epoch. 0.0 = disabled.
+    translate: float = 0.1          # Random shift, as a fraction of the image size (+/-)
+    scale: float = 0.2              # Random zoom (+/-)
+    mosaic: float = 1.0             # Probability to combine 4 images into one
 
 
 # ---------------------------------------------------------------------------
@@ -344,7 +388,7 @@ def _training_fields(definition: TrainingDefinition) -> dict:
         "samples_per_key": definition.samples_per_key,
         "epochs": definition.epochs,
         "batch_size": definition.batch_size,
-        "blur_kernels": list(definition.blur_kernels),
+        **_blur_stamp(definition.blur_kernels),
         "rect": list(definition.rect),
         "jitter": definition.jitter,
         "input_size": definition.input_size,
@@ -356,6 +400,12 @@ def _training_fields(definition: TrainingDefinition) -> dict:
                        "background_ratio": definition.background_ratio, "patience": definition.patience})
         if definition.downscale:  # Only when used: the trainings without it keep their <hash>
             fields["downscale"] = list(definition.downscale)
+        if definition.symbol_box is not None:  # Only when used, as downscale
+            fields["symbol_box"] = list(definition.symbol_box)
+        # Only when changed: the trainings with the default augmentations keep their <hash>
+        for name, default in (("translate", 0.1), ("scale", 0.2), ("mosaic", 1.0)):
+            if getattr(definition, name) != default:
+                fields[name] = getattr(definition, name)
     else:
         fields["shift_pixels"] = (definition.shift_pixels if isinstance(definition.shift_pixels, int)
                                   else list(definition.shift_pixels))
@@ -806,15 +856,49 @@ def _add_shifted_copies(samples: List[Sample], shifts: List[int]) -> List[Sample
     return samples + copies
 
 
-def _add_blurred_copies(samples: List[Sample], kernels: List[int]) -> List[Sample]:
-    """Return the samples + one blurred copy of every sample for each kernel size."""
-    copies = []
+def _blur_variants(kernels: List[int]) -> List[Optional[int]]:
+    """
+    The images made from each image for blur_kernels, in order: None = the original image,
+    otherwise the Gaussian kernel size (made odd, as GaussianBlur needs). 1 = the original.
+    Empty list = no blur: only the original. A size given twice gives one image.
+    """
+    if not kernels:
+        return [None]
+    variants = []
     for kernel in kernels:
-        kernel = kernel if kernel % 2 == 1 else kernel + 1  # GaussianBlur needs an odd size
-        for sample in samples:
-            blurred = cv2.GaussianBlur(sample.crop_bgr, (kernel, kernel), 0)
-            copies.append(Sample(blurred, sample.label, sample.key, sample.image_path))
-    return samples + copies
+        if kernel < 1:
+            raise ValueError(f"blur_kernels sizes must be >= 1 (1 = the original image): {kernels}")
+        value = None if kernel == 1 else (kernel if kernel % 2 == 1 else kernel + 1)
+        if value not in variants:
+            variants.append(value)
+    return variants
+
+
+def _blur_stamp(kernels: List[int]) -> dict:
+    """
+    blur_kernels for the <hash> and the dataset.stamp. Before 1 existed, the original image was
+    always kept: 1 is left out, and "blur_keep_original": False is added only when the original is
+    dropped, so [1, 3] keeps the <hash> of the former [3] (same images).
+    """
+    fields = {"blur_kernels": [kernel for kernel in kernels if kernel != 1]}
+    if None not in _blur_variants(kernels):
+        fields["blur_keep_original"] = False
+    return fields
+
+
+def _add_blurred_copies(samples: List[Sample], kernels: List[int]) -> List[Sample]:
+    """
+    Return one copy of every sample per blur_kernels size (1 = the sample itself, not blurred).
+    Empty list = the samples unchanged.
+    """
+    result = []
+    for kernel in _blur_variants(kernels):
+        if kernel is None:
+            result += samples
+        else:
+            result += [Sample(cv2.GaussianBlur(sample.crop_bgr, (kernel, kernel), 0), sample.label,
+                              sample.key, sample.image_path) for sample in samples]
+    return result
 
 
 def train_model(definition: TrainingDefinition, samples: List[Sample]) -> Path:
@@ -990,6 +1074,7 @@ def build_detect_images(definition: TrainingYoloDetect, keys: Dict[Tuple[str, ..
     bx0, by0, bx1, by1 = box
     images: List[DetectImage] = []
     missing = 0
+    cut_values = Counter()  # symbol_box: label values whose box goes out of the window
     pending_backgrounds = 0.0
     for index, (key, refs) in enumerate(sorted(keys.items())):
         print(f"[{definition.name}] Key {index + 1}/{len(keys)}: {key}")
@@ -1005,8 +1090,18 @@ def build_detect_images(definition: TrainingYoloDetect, keys: Dict[Tuple[str, ..
             x = bx0 - margin_x + rng.randint(-margin_x, margin_x)
             y = by0 - margin_y + rng.randint(-margin_y, margin_y)
             if key[0]:
+                if definition.symbol_box is None:
+                    sx0, sy0, sx1, sy1 = box
+                else:
+                    sx0, sy0, sx1, sy1 = symbol_box_in_card(definition.symbol_box, key[0])
+                in_window = (max(0, sx0 - x), max(0, sy0 - y), min(width, sx1 - x), min(height, sy1 - y))
+                if in_window != (sx0 - x, sy0 - y, sx1 - x, sy1 - y):
+                    cut_values[key[0]] += 1
+                if in_window[2] <= in_window[0] or in_window[3] <= in_window[1]:
+                    raise ValueError(f"[{definition.name}] The box of {key[0]!r} is out of the window: "
+                                     f"make the rect contain it")
                 images.append(DetectImage(_crop_window(card_bgr, x, y, width, height), key[0],
-                                          (bx0 - x, by0 - y, bx1 - x, by1 - y), key, str(path)))
+                                          in_window, key, str(path)))
             else:
                 images.append(DetectImage(_crop_window(card_bgr, x, y, width, height), None, None, key, str(path)))
 
@@ -1017,6 +1112,9 @@ def build_detect_images(definition: TrainingYoloDetect, keys: Dict[Tuple[str, ..
                 if corner is not None:
                     images.append(DetectImage(_crop_window(card_bgr, *corner, width, height),
                                               None, None, key, str(path)))
+    if cut_values:
+        print(f"[{definition.name}] WARNING: {sum(cut_values.values())} boxes go out of the window and are "
+              f"cut at its border (make the rect wider to keep them whole): {dict(cut_values)}")
     return images, missing
 
 
@@ -1056,8 +1154,9 @@ def _write_yolo_split(images: List[DetectImage], class_to_index: Dict[str, int],
                       split: str, blur_kernels: List[int], downscale: List[float],
                       rng: random.Random) -> List[dict]:
     """
-    Write images/<split>/*.png and labels/<split>/*.txt (YOLO format, empty file = nothing), with
-    one blurred copy of every image per kernel and one low resolution copy per downscale factor.
+    Write images/<split>/*.png and labels/<split>/*.txt (YOLO format, empty file = nothing): one
+    image per blur_kernels size (1 = the image itself, see _blur_variants) and one low resolution
+    copy of the original image per downscale factor.
     The copies stay in the same split as their image.
     :return: one entry per written image, for images.json.
     """
@@ -1066,8 +1165,7 @@ def _write_yolo_split(images: List[DetectImage], class_to_index: Dict[str, int],
     image_dir.mkdir(parents=True, exist_ok=True)
     label_dir.mkdir(parents=True, exist_ok=True)
     # (kind, value): the image itself, then its copies.
-    variants = ([("original", None)]
-                + [("blur", kernel if kernel % 2 == 1 else kernel + 1) for kernel in blur_kernels]
+    variants = ([("original", None) if kernel is None else ("blur", kernel) for kernel in _blur_variants(blur_kernels)]
                 + [("downscale", factor) for factor in downscale])
     entries = []
     index = 0
@@ -1123,11 +1221,12 @@ def _dataset_stamp(definition: TrainingYoloDetect, keys: Dict[Tuple[str, ...], L
         "keys_hash": _keys_hash(keys),
         "rect": list(definition.rect),
         "jitter": definition.jitter,
-        "blur_kernels": list(definition.blur_kernels),
+        **_blur_stamp(definition.blur_kernels),
         "val_ratio": definition.val_ratio,
         "background_ratio": definition.background_ratio,
         "seed": DATASET_SEED,
         **({"downscale": list(definition.downscale)} if definition.downscale else {}),
+        **({"symbol_box": list(definition.symbol_box)} if definition.symbol_box is not None else {}),
     }
 
 
@@ -1215,10 +1314,11 @@ def train_yolo_detect(definition: TrainingYoloDetect, yaml_path: Path, classes: 
         workers=definition.workers,
         patience=definition.patience,
         cache=definition.cache,
-        # The window comes from a straightened card: the symbol is never mirrored and its size
-        # only changes a little. translate / mosaic (Ultralytics defaults) move it around.
+        # The window comes from a straightened card: the symbol is never mirrored.
         fliplr=0.0,
-        scale=0.2,
+        translate=definition.translate,
+        scale=definition.scale,
+        mosaic=definition.mosaic,
     )
 
     best_path = output_dir / "yolo" / "weights" / "best.pt"
@@ -1275,27 +1375,32 @@ def training():
             samples_per_key=1,
             epochs=25,
             batch_size=32,
-            blur_kernels=[3],
+            blur_kernels=[1, 3],
             downscale=[0.35, 0.45, 0.6],
             cache="ram",  # About 0.8 GB: no slow /mnt/c read after the first epoch
         ),
         # Mana cost with a YOLO detector (runs/detect/mana_cost/mana_cost/): "no mana cost" or the cost,
         # ex: '{1}{W}{W}'. Read at the top right of the card. Lands (no mana cost) are "nothing" images.
-        # One image per (mana cost, expansion): the frame and the art behind the cost change.
-        # Window 286x90 (jitter 0.25): input_size 288 keeps the symbols at full size.
+        # The rect is the search window (jitter 0: same window for every card). The box of each image
+        # only covers its symbols: n symbols -> n x 25.3 px wide, 28 px high, right edge 35 px from
+        # the right border, top 37 px from the top.
         TrainingYoloDetect(
             name="mana_cost",
             label="mana_cost",
-            sub_categories=["colors"],
-            rect=Rect(center_x=375, center_y=50, height=60, width=190),
-            accept=accept_2015,
+            sub_categories=[],
+            rect=Rect(center_x=334, center_y=51, height=102, width=308),
+            symbol_box=SymbolBox(symbol_width=253 / 10, height=28, right=35, top=37),
+            accept={"frame": ["2003", "2015"], "layout": ["normal", "flip", "transform", "modal_dfc", "leveler"]},
             filters=filters_2015,
-            samples_per_key=1,
-            input_size=288,
-            jitter=0.25,
+            samples_per_key=10,
+            input_size=320,
+            jitter=0.0,
             epochs=25,
             batch_size=32,
-            blur_kernels=[3],
+            blur_kernels=[5, 7, 9],
+            cache="ram",  # About 0.8 GB: no slow /mnt/c read after the first epoch
+            translate=0.05,
+            mosaic=1.0,
         ),
         # Expansion, read on the same symbol, with the basic CNN (runs/classify/set/set/).
         # The symbol color depends on the rarity.
@@ -1309,7 +1414,7 @@ def training():
             samples_per_key=1,
             epochs=20,
             batch_size=32,
-            blur_kernels=[3],
+            blur_kernels=[1, 3],
             shift_pixels=[2, 4, 6, 8, 10, 12, 14 ,16],
         ),
         # Rarity, read on the expansion symbol, with the basic CNN. The symbol depends on the set.
