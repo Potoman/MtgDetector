@@ -139,11 +139,15 @@ def draw_rect(card_bgr, rect):
     cv2.rectangle(card_bgr, (x0, y0), (x1, y1), (0, 255, 0), 1)
 
 
-def draw_detection(card_bgr, window, box):
-    """Draw the detector search window (gray) and the symbol it found (green) on the reshaped card."""
+def draw_detection(card_bgr, window, boxes):
+    """
+    Draw the detector search window (gray) and the symbol box(es) it found on the reshaped card,
+    alternating green / magenta so two neighbor symbols can be told apart.
+    """
     cv2.rectangle(card_bgr, window[:2], (window[2] - 1, window[3] - 1), (160, 160, 160), 1)
-    if box is not None:
-        cv2.rectangle(card_bgr, box[:2], (box[2] - 1, box[3] - 1), (0, 255, 0), 1)
+    for index, box in enumerate(boxes):
+        color = (0, 255, 0) if index % 2 == 0 else (255, 0, 255)
+        cv2.rectangle(card_bgr, box[:2], (box[2] - 1, box[3] - 1), color, 1)
 
 
 if __name__ == '__main__':
@@ -153,6 +157,7 @@ if __name__ == '__main__':
     if use_yolo:
         import yolo_pose
         import training
+        import mana_cost_training
         for choice in choose_models():
             if choice.kind == YOLO_DETECT:
                 bundle = training.load_detector(choice.path)
@@ -210,8 +215,13 @@ if __name__ == '__main__':
             for label, (kind, bundle) in label_models.items():
                 if kind == YOLO_DETECT:
                     # Same search window as the training: it is saved in detector.json next to model.pt.
-                    value, confidence, box = training.detect(bundle, card, MIN_CONFIDENCE)
-                    draw_detection(reshaped, training.search_window(bundle), box)
+                    if mana_cost_training.is_mana_cost_detector(bundle):
+                        # One box per mana symbol, joined into the mana cost: '{1}{W}{W}'.
+                        value, confidence, boxes = mana_cost_training.read_mana_cost(bundle, card, MIN_CONFIDENCE)
+                    else:
+                        value, confidence, box = training.detect(bundle, card, MIN_CONFIDENCE)
+                        boxes = [box] if box is not None else []
+                    draw_detection(reshaped, training.search_window(bundle), boxes)
                 else:
                     # Same rectangle as the training: it is saved in model.pt.
                     value, confidence = training.predict(bundle, card)
