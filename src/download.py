@@ -5,12 +5,15 @@ import time
 from pathlib import Path
 from typing import Dict, List, Tuple
 
+import local_paths
+
 
 HEADERS = {"User-Agent": "mtg-corner-detector/1.0"}
 
 # Project root (<root>), independent of the current working directory.
-ROOT = Path(__file__).resolve().parent.parent
-SCRYFALL_DIR = ROOT / "scryfall"
+ROOT = local_paths.ROOT
+# The cards (info.json + images): <root>/scryfall unless paths.json says otherwise (see local_paths.py).
+SCRYFALL_DIR = local_paths.SCRYFALL_DIR
 
 expension = {}
 
