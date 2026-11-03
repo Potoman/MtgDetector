@@ -7,3 +7,5 @@ tensorflow
 ultralytics
 torch
 requests
+albumentations
+pymupdf
