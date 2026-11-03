@@ -26,16 +26,9 @@ def list_set():
 
     # Find the most recent standard set
     # Sets are typically ordered by release date
-    latest_set = None
     for set_data in sets_data["data"]:
-        # You might want to filter by set_type (e.g., "expansion", "core", etc.)
-        if set_data["set_type"] in ["expansion", "core"]:
-            latest_set = set_data
-            expension[set_data["code"]] = set_data
-            print(f"> {set_data['code']} : {set_data['name']}")
-            #break
-
-    #return latest_set
+        expension[set_data["code"]] = set_data
+        print(f"> {set_data['code']} : {set_data['name']}")
 
 
 def get_card_images(card: dict, image_type: str = "normal") -> List[Tuple[str, str, dict]]:
