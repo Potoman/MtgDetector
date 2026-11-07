@@ -1,9 +1,10 @@
 import requests
 import json
 import os
+import re
 import time
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import local_paths
 
@@ -14,6 +15,12 @@ HEADERS = {"User-Agent": "mtg-corner-detector/1.0"}
 ROOT = local_paths.ROOT
 # The cards (info.json + images): <root>/scryfall unless paths.json says otherwise (see local_paths.py).
 SCRYFALL_DIR = local_paths.SCRYFALL_DIR
+# <root>/scryfall: the Windows folder (webcam.py). In WSL with paths.json, SCRYFALL_DIR is on the Linux disk instead.
+WINDOWS_SCRYFALL_DIR = ROOT / "scryfall"
+
+# The card symbols ({T}, {W}, {W/U}...): <scryfall dir>/symbol/*.svg + symbology.json (see download_symbols).
+SYMBOLOGY_URL = "https://api.scryfall.com/symbology"
+SYMBOL_DIR_NAME = "symbol"
 
 expension = {}
 
@@ -174,7 +181,131 @@ def download_if_not_exist(exp_code: str, card_id: str) -> List[str]:
     return download_card_images(exp_code, _get_card(exp_code, card_id))
 
 
-if __name__ == "__main__":
+# ---------------------------------------------------------------------------
+# Card symbols (https://scryfall.com/docs/api/card-symbols/all)
+# ---------------------------------------------------------------------------
+
+def symbol_dirs() -> List[Path]:
+    """
+    The folders that get the symbols: SCRYFALL_DIR/symbol, then <root>/scryfall/symbol. In WSL with
+    paths.json, the first one is on the Linux disk (~/mtg/scryfall/symbol) and the second one on the
+    Windows disk. A single folder when they are the same (on Windows, or without paths.json).
+    """
+    dirs: List[Path] = []
+    for scryfall_dir in (SCRYFALL_DIR, WINDOWS_SCRYFALL_DIR):
+        path = scryfall_dir / SYMBOL_DIR_NAME
+        if all(path.resolve() != other.resolve() for other in dirs):
+            dirs.append(path)
+    return dirs
+
+
+def symbol_file_stem(symbol: str) -> str:
+    """
+    File name (without .svg) of a symbol, same as mana_cost_gen_dataset.py: '{W/U}' -> 'W-U', '{T}' -> 'T'.
+    The other characters that Windows refuses in a file name become '_'.
+    """
+    return re.sub(r'[<>:"\\|?*]', "_", symbol.strip("{}").replace("/", "-"))
+
+
+def list_symbols() -> List[dict]:
+    """Every card symbol of scryfall (all pages)."""
+    symbols = []
+    url = SYMBOLOGY_URL
+    while url:
+        response = requests.get(url, headers={**HEADERS, "Accept": "application/json"}, timeout=30)
+        response.raise_for_status()
+        page = response.json()
+        symbols.extend(page.get("data", []))
+        url = page.get("next_page") if page.get("has_more") else None
+        if url:
+            time.sleep(0.1)  # Respect rate limits
+    return symbols
+
+
+def _write_file(path: Path, content: bytes):
+    """Write through a .part file: a download stopped halfway never leaves a broken file (it would be kept)."""
+    part_path = path.with_name(path.name + ".part")
+    part_path.write_bytes(content)
+    os.replace(part_path, path)
+
+
+def _download_svg(url: str) -> Optional[bytes]:
+    """Content of an SVG file, None (with a message) if the download fails."""
+    try:
+        response = requests.get(url, headers=HEADERS, timeout=30)
+    except requests.RequestException as error:
+        print(f"Error downloading {url}: {error}")
+        return None
+    if response.status_code != 200 or b"<svg" not in response.content:
+        print(f"Failed to download {url}: HTTP {response.status_code}")
+        return None
+    return response.content
+
+
+def download_symbols(force: bool = False) -> Dict[str, int]:
+    """
+    Every scryfall card symbol as an SVG file ({W/U} -> W-U.svg) in each folder of symbol_dirs(), with
+    symbology.json: what scryfall says about each symbol (english, colors, mana_value, appears_in_mana_costs...).
+    A symbol is downloaded once, then written in both folders. The files already there are kept (force:
+    download them again): a symbol missing from one folder only is copied from the other one.
+    :return: number of symbols 'downloaded', 'copied' (from the other folder), 'kept' (already everywhere), 'failed'.
+    """
+    dirs = symbol_dirs()
+    symbols = list_symbols()
+    with_svg = [symbol for symbol in symbols if symbol.get("svg_uri")]
+    without_svg = [symbol["symbol"] for symbol in symbols if not symbol.get("svg_uri")]
+
+    # Two symbols can't share a file (Windows ignores the case of the file names).
+    by_file: Dict[str, List[str]] = {}
+    for symbol in with_svg:
+        by_file.setdefault(symbol_file_stem(symbol["symbol"]).lower(), []).append(symbol["symbol"])
+    clashes = [names for names in by_file.values() if len(names) > 1]
+    if clashes:
+        raise ValueError(f"Several symbols would get the same file: {clashes}. Change symbol_file_stem.")
+
+    for directory in dirs:
+        directory.mkdir(parents=True, exist_ok=True)
+    print(f"{len(with_svg)} symbols for: {', '.join(str(directory) for directory in dirs)}")
+
+    counts = {"downloaded": 0, "copied": 0, "kept": 0, "failed": 0}
+    failed = []
+    for symbol in with_svg:
+        name = f"{symbol_file_stem(symbol['symbol'])}.svg"
+        paths = [directory / name for directory in dirs]
+        missing = paths if force else [path for path in paths if not path.exists()]
+        if not missing:
+            counts["kept"] += 1
+            continue
+        if len(missing) == len(paths):
+            content = _download_svg(symbol["svg_uri"])
+            time.sleep(0.1)  # Be nice to the API - don't flood it with requests
+            if content is None:
+                failed.append(symbol["symbol"])
+                continue
+            action = "downloaded"
+        else:
+            content = next(path for path in paths if path not in missing).read_bytes()
+            action = "copied"
+        for path in missing:
+            _write_file(path, content)
+        counts[action] += 1
+        print(f"{action.capitalize()}: {symbol['symbol']} -> {name}")
+
+    for directory in dirs:
+        _write_file(directory / "symbology.json", json.dumps(symbols, indent=4, ensure_ascii=False).encode("utf-8"))
+
+    counts["failed"] = len(failed)
+    print(f"Download complete. {len(with_svg)} symbols: {counts['downloaded']} downloaded, "
+          f"{counts['copied']} copied from the other folder, {counts['kept']} already there.")
+    if without_svg:
+        print(f"No SVG on scryfall, skipped: {' '.join(without_svg)}")
+    if failed:
+        print(f"Failed, run it again: {' '.join(failed)}")
+    return counts
+
+
+def ask_expensions():
+    """Interactive download of the cards: which set ('*' = every set), with images or not."""
     # Get the latest set
     list_set()
     exp_code = input(f"Which expension ? : ")
@@ -189,3 +320,22 @@ if __name__ == "__main__":
     else:
         card_count = download_expension(exp_code, with_image == "y")
         print(f"Download complete. {card_count} cards saved.")
+
+
+def ask_download() -> str:
+    """First question: 'set' (the cards of a set) or 'symbol' (every card symbol)."""
+    choices = {"1": "set", "2": "symbol"}
+    for number, choice in choices.items():
+        print(f"{number} : {choice}")
+    while True:
+        answer = input("Your choice ? : ").strip()
+        if answer in choices:
+            return choices[answer]
+        print(f"Answer {' or '.join(choices)}.")
+
+
+if __name__ == "__main__":
+    if ask_download() == "symbol":
+        download_symbols()
+    else:
+        ask_expensions()
