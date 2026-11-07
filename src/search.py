@@ -1,4 +1,4 @@
-"""Search the possible cards in the local scryfall data (<root>/scryfall/exp_<code>/info.json).
+"""Search the possible cards in the local scryfall data (<root>/scryfall/exp/exp_<code>/info.json).
 
 Offline: no internet request, only the info.json files written by download.py.
 
@@ -26,6 +26,7 @@ import local_paths
 # Project root (<root>), independent of the current working directory.
 ROOT = Path(__file__).resolve().parent.parent
 SCRYFALL_DIR = local_paths.SCRYFALL_DIR  # <root>/scryfall unless paths.json says otherwise
+EXP_DIR = local_paths.EXP_DIR            # <scryfall dir>/exp
 
 RARITIES = ["common", "uncommon", "rare", "mythic", "special", "bonus"]
 
@@ -38,20 +39,20 @@ class SearchCriteria:
     mana_cost: Optional[str] = None     # '{1}{W}{W}' or '1WW', 'none' = no mana cost
 
 
-# Cache of <root>/scryfall/exp_<code>/info.json, indexed by expansion code.
+# Cache of <root>/scryfall/exp/exp_<code>/info.json, indexed by expansion code.
 _cards_by_exp: Dict[str, List[dict]] = {}
 
 
 def list_exp_codes() -> List[str]:
-    """Every expansion code having a scryfall/exp_<code>/info.json."""
-    return sorted(p.parent.name[len("exp_"):] for p in SCRYFALL_DIR.glob("exp_*/info.json"))
+    """Every expansion code having a scryfall/exp/exp_<code>/info.json."""
+    return sorted(p.parent.name[len("exp_"):] for p in EXP_DIR.glob("exp_*/info.json"))
 
 
 def load_cards(exp_code: str) -> List[dict]:
-    """Cards of scryfall/exp_<exp_code>/info.json (cached). Empty list if the file doesn't exist."""
+    """Cards of scryfall/exp/exp_<exp_code>/info.json (cached). Empty list if the file doesn't exist."""
     exp_code = exp_code.lower()
     if exp_code not in _cards_by_exp:
-        info_path = SCRYFALL_DIR / f"exp_{exp_code}" / "info.json"
+        info_path = EXP_DIR / f"exp_{exp_code}" / "info.json"
         if info_path.exists():
             with open(info_path, "r", encoding="utf-8") as fp:
                 _cards_by_exp[exp_code] = json.load(fp)
@@ -129,7 +130,7 @@ def print_cards(cards: List[dict], criteria: SearchCriteria):
     if not cards:
         print(f"No card found for {criteria}.")
         if criteria.exp_code and criteria.exp_code.lower() not in list_exp_codes():
-            print(f"No scryfall/exp_{criteria.exp_code.lower()}/info.json: download the expansion first "
+            print(f"No scryfall/exp/exp_{criteria.exp_code.lower()}/info.json: download the expansion first "
                   f"(python3 src/download.py). Known codes: {', '.join(list_exp_codes())}")
         return
 

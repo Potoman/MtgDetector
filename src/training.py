@@ -8,7 +8,7 @@ A training is defined by:
   'y' increases toward the bottom of the card.
 
 For each training:
-1. Every <root>/scryfall/exp_<exp_code>/info.json is read. For every card image (each face
+1. Every <root>/scryfall/exp/exp_<exp_code>/info.json is read. For every card image (each face
    of a double-faced card is its own image), the label value and the sub-category values
    build a key: (label, sub_category_1, sub_category_2, ...).
 2. Each unique key is kept once (up to `samples_per_key` different images).
@@ -80,6 +80,7 @@ import local_paths
 
 ROOT = download.ROOT
 SCRYFALL_DIR = download.SCRYFALL_DIR
+EXP_DIR = download.EXP_DIR
 OUTPUT_DIR = local_paths.RUNS_DIR / "classify"
 DETECT_OUTPUT_DIR = local_paths.RUNS_DIR / "detect"  # TrainingYoloDetect
 # Files copied to <root>/runs for webcam.py when the trainings run elsewhere (see local_paths.publish):
@@ -112,7 +113,7 @@ class TrainingDefinition:
     sub_categories: List[str]       # Card fields that influence the image (ex: ['set'])
     rect: Rect                      # Area of the card to classify
     # --- Optional ---
-    exp_codes: Optional[List[str]] = None   # None = every scryfall/exp_*/info.json
+    exp_codes: Optional[List[str]] = None   # None = every scryfall/exp/exp_*/info.json
     # Card field -> accepted values. Empty = every card is accepted. Otherwise a card image is
     # accepted only if, for every field, its value is in the list (for a list field such as
     # 'frame_effects', at least one of its values must be in the list).
@@ -217,7 +218,7 @@ class TrainingYoloDetect:
 
 
 # ---------------------------------------------------------------------------
-# 1. Search the keys in scryfall/exp_*/info.json
+# 1. Search the keys in scryfall/exp/exp_*/info.json
 # ---------------------------------------------------------------------------
 
 @dataclass
@@ -228,7 +229,7 @@ class ImageRef:
 
 
 def list_exp_codes() -> List[str]:
-    return sorted(p.parent.name[len("exp_"):] for p in SCRYFALL_DIR.glob("exp_*/info.json"))
+    return sorted(p.parent.name[len("exp_"):] for p in EXP_DIR.glob("exp_*/info.json"))
 
 
 def _normalize(value) -> Optional[str]:
@@ -314,7 +315,7 @@ def collect_keys(definition: TrainingDefinition) -> Dict[Tuple[str, ...], List[I
     seen: Dict[Tuple[str, ...], set] = defaultdict(set)  # Illustrations already in each key
 
     for exp_code in definition.exp_codes or list_exp_codes():
-        info_path = SCRYFALL_DIR / f"exp_{exp_code}" / "info.json"
+        info_path = EXP_DIR / f"exp_{exp_code}" / "info.json"
         if not info_path.exists():
             print(f"[{definition.name}] Missing {info_path}, skipped.")
             continue
@@ -547,7 +548,7 @@ def load_or_collect_keys(definition: TrainingDefinition) -> Dict[Tuple[str, ...]
 
 def _image_path(image: ImageRef) -> Path:
     """Where download.download_if_not_exist saves the image of this face."""
-    return SCRYFALL_DIR / f"exp_{image.exp_code}" / "image" / f"{image.illustration_id}.jpg"
+    return EXP_DIR / f"exp_{image.exp_code}" / "image" / f"{image.illustration_id}.jpg"
 
 
 def _download_stamp(definition: TrainingDefinition, keys: Dict[Tuple[str, ...], List[ImageRef]]) -> dict:

@@ -9,7 +9,8 @@ keeps the defaults (<root>/scryfall and <root>/runs): every model trained in WSL
 
 Keys, all optional, in a "linux" or "windows" section (that system only) or at the top level (every
 system). '~' is the home folder, a relative path starts from <root>.
-- scryfall_dir: the cards, <dir>/exp_<code>/info.json and <dir>/exp_<code>/image/*.jpg.
+- scryfall_dir: the cards, <dir>/exp/exp_<code>/info.json and <dir>/exp/exp_<code>/image/*.jpg (EXP_DIR),
+  and the card symbols, <dir>/symbol/*.svg.
   Default <root>/scryfall. It must exist: a wrong path would download every image again elsewhere.
 - runs_dir: what the trainings write (keys, datasets, check images, Ultralytics runs, models).
   Default <root>/runs. Created if missing.
@@ -59,6 +60,11 @@ def _folder(values: Dict[str, str], name: str, default: Path, create: bool) -> P
 
 _settings = _load(PATHS_FILE)
 SCRYFALL_DIR = _folder(_settings, "scryfall_dir", ROOT / "scryfall", create=False)
+# The expansions: EXP_DIR/exp_<code>/info.json and EXP_DIR/exp_<code>/image/*.jpg.
+EXP_DIR = SCRYFALL_DIR / "exp"
+# Old layout (SCRYFALL_DIR/exp_<code>): stop, instead of downloading every card again into EXP_DIR.
+if not EXP_DIR.is_dir() and any(SCRYFALL_DIR.glob("exp_*")):
+    raise FileNotFoundError(f"The expansions are now in {EXP_DIR}: move the exp_* folders of {SCRYFALL_DIR} there.")
 RUNS_DIR = _folder(_settings, "runs_dir", ROOT / "runs", create=True)
 
 
@@ -94,5 +100,6 @@ if __name__ == "__main__":
     print(f"System:       {SYSTEM}")
     print(f"Settings:     {PATHS_FILE} ({'found' if PATHS_FILE.exists() else 'not found, defaults'})")
     print(f"scryfall_dir: {SCRYFALL_DIR}")
+    print(f"exp_dir:      {EXP_DIR}")
     print(f"runs_dir:     {RUNS_DIR}")
     print(f"Models published into {PUBLISH_DIR}: {'yes' if publishing() else 'no (runs_dir is already there)'}")

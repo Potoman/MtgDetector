@@ -197,7 +197,7 @@ def get_noised_mtg(exp_code: str, illustration_id: str, height: int = 680, width
     :param illustration_id: illustration id of the card we wanted
     :param height: height of the output imaage
     :param width: width of the output image
-    :param image_path: path of the card image. None = scryfall/exp_<exp_code>/image/<illustration_id>.jpg
+    :param image_path: path of the card image. None = scryfall/exp/exp_<exp_code>/image/<illustration_id>.jpg
     :return:
     """
     mtg = crop.get_bgra_image(exp_code, illustration_id, height, width, image_path)

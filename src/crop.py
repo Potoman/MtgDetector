@@ -28,14 +28,14 @@ def get_crop_exp(exp_code: str, rarity: str, color: str, illustration_id: str) -
     return cropped_image, {'exp_code': exp_code, 'rarity': rarity, 'color': color}
 
 
-# Cache of <root>/scryfall/exp_<exp_code>/info.json: illustration_id -> scryfall card id.
+# Cache of <root>/scryfall/exp/exp_<exp_code>/info.json: illustration_id -> scryfall card id.
 _card_id_by_illustration: Dict[str, Dict[str, str]] = {}
 
 
 def _get_card_id(exp_code: str, illustration_id: str) -> str:
-    """Find the scryfall card id owning `illustration_id` in <root>/scryfall/exp_<exp_code>/info.json."""
+    """Find the scryfall card id owning `illustration_id` in <root>/scryfall/exp/exp_<exp_code>/info.json."""
     if exp_code not in _card_id_by_illustration:
-        with open(download.SCRYFALL_DIR / f"exp_{exp_code}" / "info.json", "r", encoding="utf-8") as fp:
+        with open(download.EXP_DIR / f"exp_{exp_code}" / "info.json", "r", encoding="utf-8") as fp:
             _card_id_by_illustration[exp_code] = {
                 image_illustration_id: card["id"]
                 for card in json.load(fp)
@@ -48,11 +48,11 @@ def _get_card_id(exp_code: str, illustration_id: str) -> str:
 
 def _get_image_path(exp_code: str, illustration_id: str) -> str:
     """
-    Path of a card image: <root>/scryfall/exp_<exp_code>/image/<illustration_id>.jpg
+    Path of a card image: <root>/scryfall/exp/exp_<exp_code>/image/<illustration_id>.jpg
     (same location as download.download_if_not_exist and yolo_pose). The image is downloaded
     from scryfall if it is not on disk yet.
     """
-    path = download.SCRYFALL_DIR / f"exp_{exp_code}" / "image" / f"{illustration_id}.jpg"
+    path = download.EXP_DIR / f"exp_{exp_code}" / "image" / f"{illustration_id}.jpg"
     if not path.exists():
         download.download_if_not_exist(exp_code, _get_card_id(exp_code, illustration_id))
         if not path.exists():
@@ -184,7 +184,7 @@ def get_bgra_image(exp_code: str, illustration_id: str, height: int=680, width: 
 
     :param exp_code:
     :param illustration_id:
-    :param image_path: path of the card image. None = scryfall/exp_<exp_code>/image/<illustration_id>.jpg
+    :param image_path: path of the card image. None = scryfall/exp/exp_<exp_code>/image/<illustration_id>.jpg
     :return: a RGB card of size 488x680
     """
     image = cv2.imread(str(image_path) if image_path is not None else _get_image_path(exp_code, illustration_id))

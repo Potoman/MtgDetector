@@ -13,8 +13,10 @@ HEADERS = {"User-Agent": "mtg-corner-detector/1.0"}
 
 # Project root (<root>), independent of the current working directory.
 ROOT = local_paths.ROOT
-# The cards (info.json + images): <root>/scryfall unless paths.json says otherwise (see local_paths.py).
+# <root>/scryfall unless paths.json says otherwise (see local_paths.py).
 SCRYFALL_DIR = local_paths.SCRYFALL_DIR
+# The cards (info.json + images): <scryfall dir>/exp/exp_<code>/.
+EXP_DIR = local_paths.EXP_DIR
 # <root>/scryfall: the Windows folder (webcam.py). In WSL with paths.json, SCRYFALL_DIR is on the Linux disk instead.
 WINDOWS_SCRYFALL_DIR = ROOT / "scryfall"
 
@@ -24,7 +26,7 @@ SYMBOL_DIR_NAME = "symbol"
 
 expension = {}
 
-# Cache of <root>/scryfall/exp_<exp_code>/info.json, indexed by card id.
+# Cache of <root>/scryfall/exp/exp_<exp_code>/info.json, indexed by card id.
 _cards_by_id: Dict[str, Dict[str, dict]] = {}
 
 
@@ -64,10 +66,10 @@ def get_card_images(card: dict, image_type: str = "normal") -> List[Tuple[str, s
 
 def download_expension(exp_code: str, image: bool):
     """
-    Save the cards of a set in <root>/scryfall/exp_<exp_code>/info.json (+ their missing images if `image`).
+    Save the cards of a set in <root>/scryfall/exp/exp_<exp_code>/info.json (+ their missing images if `image`).
     An existing info.json is reused, not downloaded again: delete it to get the latest data.
     """
-    exp_dir = SCRYFALL_DIR / f"exp_{exp_code}"
+    exp_dir = EXP_DIR / f"exp_{exp_code}"
     info_path = exp_dir / "info.json"
 
     if info_path.exists():
@@ -141,9 +143,9 @@ def save_image(image_url, directory, filename):
 
 
 def _get_card(exp_code: str, card_id: str) -> dict:
-    """Find a card by its scryfall id in <root>/scryfall/exp_<exp_code>/info.json (cached)."""
+    """Find a card by its scryfall id in <root>/scryfall/exp/exp_<exp_code>/info.json (cached)."""
     if exp_code not in _cards_by_id:
-        with open(SCRYFALL_DIR / f"exp_{exp_code}" / "info.json", "r", encoding="utf-8") as fp:
+        with open(EXP_DIR / f"exp_{exp_code}" / "info.json", "r", encoding="utf-8") as fp:
             _cards_by_id[exp_code] = {card["id"]: card for card in json.load(fp)}
     if card_id not in _cards_by_id[exp_code]:
         raise KeyError(f"Card '{card_id}' not found in expension '{exp_code}'")
@@ -153,14 +155,14 @@ def _get_card(exp_code: str, card_id: str) -> dict:
 def download_card_images(exp_code: str, card: dict) -> List[str]:
     """
     Download every image of a card (all faces for a double-faced card) that is not already
-    in <root>/scryfall/exp_<exp_code>/image/<illustration_id>.jpg.
+    in <root>/scryfall/exp/exp_<exp_code>/image/<illustration_id>.jpg.
 
     :param exp_code: expension code (ex: 'mrd')
     :param card: scryfall json object of the card
     :return: the path of every image of the card available on disk (already present or just
              downloaded), in face order. A face whose download failed is not returned.
     """
-    image_dir = SCRYFALL_DIR / f"exp_{exp_code}" / "image"
+    image_dir = EXP_DIR / f"exp_{exp_code}" / "image"
     os.makedirs(image_dir, exist_ok=True)
 
     paths = []
@@ -177,7 +179,7 @@ def download_card_images(exp_code: str, card: dict) -> List[str]:
 
 
 def download_if_not_exist(exp_code: str, card_id: str) -> List[str]:
-    """download_card_images for a card found by its scryfall id in <root>/scryfall/exp_<exp_code>/info.json."""
+    """download_card_images for a card found by its scryfall id in <root>/scryfall/exp/exp_<exp_code>/info.json."""
     return download_card_images(exp_code, _get_card(exp_code, card_id))
 
 

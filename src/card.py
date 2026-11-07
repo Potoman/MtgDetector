@@ -13,7 +13,7 @@ data_base: Dict[str, List[str]] = {}
 def get_illustrations_ids(exp_code: str) -> List[str]:
     if exp_code not in data_base:
         illustration_ids = []
-        with open(local_paths.SCRYFALL_DIR / f"exp_{exp_code}" / "info.json", 'r', encoding="utf-8") as file:
+        with open(local_paths.EXP_DIR / f"exp_{exp_code}" / "info.json", 'r', encoding="utf-8") as file:
             cards = json.load(file)
             for card in cards:
                 # Some cards have multiple faces

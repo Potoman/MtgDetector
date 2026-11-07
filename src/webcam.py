@@ -59,11 +59,11 @@ def no_image():
 
 
 def get_expansion_name(exp_code):
-    """Full expansion name from <root>/scryfall/exp_<exp_code>/info.json (cached). Falls back to the code."""
+    """Full expansion name from <root>/scryfall/exp/exp_<exp_code>/info.json (cached). Falls back to the code."""
     if exp_code not in _expansion_names:
         name = exp_code
         try:
-            with open(ROOT / "scryfall" / f"exp_{exp_code}" / "info.json", "r", encoding="utf-8") as fp:
+            with open(ROOT / "scryfall" / "exp" / f"exp_{exp_code}" / "info.json", "r", encoding="utf-8") as fp:
                 cards = json.load(fp)
             if cards:
                 name = cards[0].get("set_name", exp_code)

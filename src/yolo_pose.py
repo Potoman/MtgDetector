@@ -34,15 +34,15 @@ def _as_list(values) -> Optional[List[str]]:
 
 
 def _list_exp_codes(exp_code: Union[str, List[str]]) -> List[str]:
-    """'*' = every scryfall/exp_<code>/info.json, otherwise the given code(s)."""
+    """'*' = every scryfall/exp/exp_<code>/info.json, otherwise the given code(s)."""
     if exp_code == "*":
-        return sorted(p.parent.name[len("exp_"):] for p in download.SCRYFALL_DIR.glob("exp_*/info.json"))
+        return sorted(p.parent.name[len("exp_"):] for p in download.EXP_DIR.glob("exp_*/info.json"))
     return _as_list(exp_code)
 
 
 def _image_path(exp_code: str, illustration_id: str):
-    """Where download.download_if_not_exist saves a card image: scryfall/exp_<code>/image/<id>.jpg"""
-    return download.SCRYFALL_DIR / f"exp_{exp_code}" / "image" / f"{illustration_id}.jpg"
+    """Where download.download_if_not_exist saves a card image: scryfall/exp/exp_<code>/image/<id>.jpg"""
+    return download.EXP_DIR / f"exp_{exp_code}" / "image" / f"{illustration_id}.jpg"
 
 
 def select_card_images(count: int, exp_code: Union[str, List[str]] = "*", frame: Union[None, str, List[str]] = None,
@@ -54,7 +54,7 @@ def select_card_images(count: int, exp_code: Union[str, List[str]] = "*", frame:
     2. Each expansion of the group gives count / N images (the remainder goes to random
        expansions of the group, one more image each), picked at random among its matching cards.
        An expansion with fewer matching cards than its share repeats some of them.
-    3. Missing images are downloaded into scryfall/exp_<code>/image/ (download_missing=True).
+    3. Missing images are downloaded into scryfall/exp/exp_<code>/image/ (download_missing=True).
        With download_missing=False, only the images already in that folder are used.
     :return: the selected images, shuffled: [(exp_code, illustration_id, image_path)]
     """
@@ -63,7 +63,7 @@ def select_card_images(count: int, exp_code: Union[str, List[str]] = "*", frame:
     # 1. The group: expansions with at least one matching card image.
     candidates = {}
     for code in _list_exp_codes(exp_code):
-        info_path = download.SCRYFALL_DIR / f"exp_{code}" / "info.json"
+        info_path = download.EXP_DIR / f"exp_{code}" / "info.json"
         if not info_path.exists():
             print(f"Missing {info_path}, expansion '{code}' skipped.")
             continue
