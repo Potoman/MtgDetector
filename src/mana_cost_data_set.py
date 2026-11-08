@@ -17,10 +17,12 @@ n samples, in <runs_dir>/detect/mana_cost/gen/<n>/ (in WSL: ~/mtg/runs, see loca
      The cards of the validation are never used as backgrounds.
   2. Text, on TEXT_RATIO (15%) of the images: a few lines of card names, each line black or white,
      at random places (no box: the text is not a symbol).
-  3. A random mana cost: its number of symbols drawn with SYMBOL_COUNTS (1: 10%, 2: 20%, 3: 20%,
-     4: 20%, 5: 15%, 6 to 10: 3% each), each symbol any symbol of scryfall/symbol/ but EXCLUDED
-     (download them first: python3 src/download.py, choice 2). A new one is picked while the row is
-     wider than the image.
+  3. A random mana cost built like the ones of the cards (see random_mana_cost): each part of
+     MANA_COST_PARTS is in it with its probability ({X}/{Y}/{Z} 5%, a numbered mana 50%, {2/W}... 2%,
+     {C} 2%, {C/W}... 1%, colored mana 80%, {W/U}... 4%, {W/P}... 3%, {W/U/P}... 1%, {S} 2%), with
+     SYMBOL_REPEATS symbols (one for the numbered mana), and the symbols are sorted in CARD_ORDER.
+     The symbols come from scryfall/symbol/ (download them first: python3 src/download.py, choice 2).
+     A new mana cost is picked while it is empty or wider than the image.
   4. The symbols in one row, SYMBOL_GAP (2) pixels apart, their centers at the same height. A
      symbol is 23 x 23 pixels (measured on real cards: ~23 px wide, centers ~25.5 px apart), a hybrid
      one (a '-' in its file name: R-G.svg, 2-W.svg, U-P.svg) is 30 x 30. The row is put at a random
@@ -63,7 +65,7 @@ import local_paths
 import training
 import training_mana_cost as mana
 
-VERSION = 4   # Change it when the generation changes: every dataset is built again
+VERSION = 5   # Change it when the generation changes: every dataset is built again
 SEED = 0      # Same n -> same dataset
 
 # --- Symbols ---
@@ -81,8 +83,38 @@ SHADOW_OFFSET = (-2, 2)
 SHADOW_BLUR = 0.8
 SHADOW_OPACITY = 0.8
 _SHADOW_PAD = 4         # Margin around the shadow of a symbol, for its offset and its blur
-# Number of symbols of a generated mana cost: {count: probability}. No image without symbol.
-SYMBOL_COUNTS = {1: 0.10, 2: 0.20, 3: 0.20, 4: 0.20, 5: 0.15, 6: 0.03, 7: 0.03, 8: 0.03, 9: 0.03, 10: 0.03}
+# --- Mana cost of a generated image, built like on the cards (see random_mana_cost) ---
+# The parts of a mana cost, in the order of the cards: (part, probability that a mana cost has it, its
+# symbols). Each part is drawn on its own.
+MANA_COST_PARTS = [
+    ("variable", 0.05, ["X", "Y", "Z"]),
+    ("number", 0.50, []),  # One symbol, drawn with number_weights()
+    ("two_hybrid", 0.02, ["2/W", "2/U", "2/B", "2/R", "2/G"]),
+    ("colorless", 0.02, ["C"]),
+    ("colorless_hybrid", 0.01, ["C/W", "C/U", "C/B", "C/R", "C/G", "C/P"]),
+    ("colored", 0.80, ["W", "U", "B", "R", "G"]),
+    ("hybrid", 0.04, ["W/U", "W/B", "U/B", "U/R", "B/R", "B/G", "R/G", "R/W", "G/W", "G/U"]),
+    ("phyrexian", 0.03, ["W/P", "U/P", "B/P", "R/P", "G/P"]),
+    ("hybrid_phyrexian", 0.01, ["W/U/P", "W/B/P", "U/B/P", "U/R/P", "B/R/P", "B/G/P", "R/G/P", "R/W/P",
+                                "G/W/P", "G/U/P"]),
+    ("snow", 0.02, ["S"]),
+]
+# Numbered mana: {1} to {7} weighted as on the cards, sharing what RARE_NUMBERS leave (RARE_NUMBER_SHARE each).
+NUMBER_WEIGHTS = {"1": 25, "2": 25, "3": 18, "4": 12, "5": 7, "6": 5, "7": 3}
+RARE_NUMBERS = ["0", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "½", "∞", "A"]
+RARE_NUMBER_SHARE = 0.01
+# Number of symbols of a part that is in the mana cost (not the numbered mana: always one): {count: probability}.
+SYMBOL_REPEATS = {1: 0.50, 2: 0.30, 3: 0.10, 4: 0.05, 5: 0.025, 6: 0.025}
+# Number of different symbols among them, as on the cards ({U}{U}, {W}{U}{U}, {W}{U}{B}): {count: probability}.
+DISTINCT_SYMBOLS = {1: 0.70, 2: 0.25, 3: 0.05}
+# Order of the symbols in a mana cost: variables, numbered mana, {2/W}..., colorless, colored mana with their
+# hybrids between them, Phyrexian, hybrid Phyrexian, snow.
+CARD_ORDER = (["X", "Y", "Z"] + list(NUMBER_WEIGHTS) + RARE_NUMBERS + ["2/W", "2/U", "2/B", "2/R", "2/G"]
+              + ["C", "C/W", "C/U", "C/B", "C/R", "C/G", "C/P"]
+              + ["W", "W/U", "W/B", "U", "U/B", "U/R", "B", "B/R", "B/G", "R", "R/G", "R/W", "G", "G/W", "G/U"]
+              + ["W/P", "U/P", "B/P", "R/P", "G/P"]
+              + ["W/U/P", "W/B/P", "U/B/P", "U/R/P", "B/R/P", "B/G/P", "R/G/P", "R/W/P", "G/W/P", "G/U/P"]
+              + ["S"])
 RENDER_SCALE = 4        # The SVG is drawn 4x bigger, then reduced: smooth edges
 
 # --- Images ---
@@ -201,11 +233,55 @@ def row_width(sizes: List[int], gap: int = SYMBOL_GAP) -> int:
     return sum(sizes) + gap * max(0, len(sizes) - 1)
 
 
+def number_weights() -> Dict[str, float]:
+    """Probability of each numbered mana: RARE_NUMBER_SHARE for each RARE_NUMBERS, the rest as NUMBER_WEIGHTS."""
+    common = 1 - RARE_NUMBER_SHARE * len(RARE_NUMBERS)
+    total = sum(NUMBER_WEIGHTS.values())
+    return {**{name: common * weight / total for name, weight in NUMBER_WEIGHTS.items()},
+            **{name: RARE_NUMBER_SHARE for name in RARE_NUMBERS}}
+
+
+def _draw(weights: Dict, rng: random.Random):
+    values, probabilities = zip(*weights.items())
+    return rng.choices(values, probabilities)[0]
+
+
+def _part_symbols(part_symbols: List[str], rng: random.Random) -> List[str]:
+    """SYMBOL_REPEATS symbols of a part, spread over DISTINCT_SYMBOLS different ones: {U}{U}, {W}{U}{U}..."""
+    count = _draw(SYMBOL_REPEATS, rng)
+    distinct = rng.sample(part_symbols, min(_draw(DISTINCT_SYMBOLS, rng), count, len(part_symbols)))
+    return distinct + [rng.choice(distinct) for _ in range(count - len(distinct))]
+
+
+def check_mana_cost_symbols(symbols: List[Symbol]):
+    """Every symbol of CARD_ORDER must be a class, and every class in CARD_ORDER (else it is never generated)."""
+    names = {symbol.name for symbol in symbols}
+    missing = [name for name in CARD_ORDER if name not in names]
+    if missing:
+        raise ValueError(f"Symbols of CARD_ORDER missing in {SYMBOL_DIR} (or EXCLUDED): {missing}")
+    never = sorted(names - set(CARD_ORDER))
+    if never:
+        print(f"Warning: never generated (not in CARD_ORDER): {never}")
+
+
 def random_mana_cost(symbols: List[Symbol], rng: random.Random) -> List[Symbol]:
-    """Random symbols, their number drawn with SYMBOL_COUNTS, picked again while the row is wider than the image."""
-    counts, weights = zip(*SYMBOL_COUNTS.items())
+    """
+    A mana cost built like on the cards: each part of MANA_COST_PARTS is in it with its probability, the
+    numbered mana with one symbol (number_weights), the other parts with SYMBOL_REPEATS symbols, then
+    the symbols are sorted in CARD_ORDER: {X}{2}{W}{W/U}{U}. Picked again while it is empty or wider
+    than the image.
+    """
+    by_name = {symbol.name: symbol for symbol in symbols}
+    numbers = number_weights()
     while True:
-        row = [rng.choice(symbols) for _ in range(rng.choices(counts, weights)[0])]
+        names = []
+        for part, probability, part_symbols in MANA_COST_PARTS:
+            if rng.random() < probability:
+                names += [_draw(numbers, rng)] if part == "number" else _part_symbols(part_symbols, rng)
+        if not names:
+            continue
+        names.sort(key=CARD_ORDER.index)
+        row = [by_name[name] for name in names]
         if row_width([symbol.size for symbol in row]) <= IMAGE_WIDTH:
             return row
 
@@ -440,7 +516,8 @@ def dataset_stamp(n: int, paths: List[Path]) -> dict:
         "val_ratio": VAL_RATIO,
         "val_max": VAL_MAX,
         "image_size": [IMAGE_WIDTH, IMAGE_HEIGHT],
-        "symbol_counts": SYMBOL_COUNTS,
+        "mana_cost": {"parts": MANA_COST_PARTS, "numbers": number_weights(), "repeats": SYMBOL_REPEATS,
+                      "distinct": DISTINCT_SYMBOLS, "order": CARD_ORDER},
         "symbol_size": SYMBOL_SIZE,
         "hybrid_size": HYBRID_SIZE,
         "symbol_gap": SYMBOL_GAP,
@@ -532,6 +609,7 @@ def build_dataset(n: int, paths: List[Path], stamp: dict) -> Tuple[Path, List[st
     print(f"Mana cost dataset of {n} samples ({n_train} generated for train, {n_val} real cards for val): {root}")
 
     symbols = load_symbols(paths)
+    check_mana_cost_symbols(symbols)
     classes = sorted(symbol.name for symbol in symbols)
     class_to_index = {name: index for index, name in enumerate(classes)}
     cards = list_card_images()
