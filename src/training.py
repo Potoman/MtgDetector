@@ -197,6 +197,11 @@ class TrainingYoloDetect:
     translate: float = 0.1          # Random shift, as a fraction of the image size (+/-)
     scale: float = 0.2              # Random zoom (+/-)
     mosaic: float = 1.0             # Probability to combine 4 images into one
+    # Ultralytics color change (RandomHSV), on every training image, after `augmentations`. The
+    # defaults are the Ultralytics ones. 0.0 = disabled.
+    hsv_h: float = 0.015            # Hue shift, fraction of the color wheel (+/-)
+    hsv_s: float = 0.7              # Saturation change, fraction (+/-): 0.7 = x0.3 to x1.7
+    hsv_v: float = 0.4              # Brightness change, fraction (+/-): 0.4 = x0.6 to x1.4
     # Albumentations transforms (pip install albumentations), redone at every epoch on the training
     # images only, after mosaic: (name in the albumentations package, its parameters). Ex: webcam
     # colors: [("ToGray", {"p": 0.4}), ("RGBShift", {"p": 0.5})]. Empty = the Ultralytics defaults
@@ -385,7 +390,7 @@ def _training_fields(definition: TrainingDefinition) -> dict:
     Not used: name (already in the path), save_crops (only writes the PNG check images),
     workers and cache (only change the speed).
     A TrainingYoloDetect has no shift_pixels, and adds its type, model and background_ratio (and
-    translate, scale, mosaic, augmentations when they are not the default).
+    translate, scale, mosaic, hsv_h, hsv_s, hsv_v, augmentations when they are not the default).
     """
     fields = {
         "label": definition.label,
@@ -410,7 +415,8 @@ def _training_fields(definition: TrainingDefinition) -> dict:
             fields["downscale"] = list(definition.downscale)
         fields.update(definition.extra_fields())  # Settings of a subclass
         # Only when changed: the trainings with the default augmentations keep their <hash>
-        for name, default in (("translate", 0.1), ("scale", 0.2), ("mosaic", 1.0)):
+        for name, default in (("translate", 0.1), ("scale", 0.2), ("mosaic", 1.0),
+                              ("hsv_h", 0.015), ("hsv_s", 0.7), ("hsv_v", 0.4)):
             if getattr(definition, name) != default:
                 fields[name] = getattr(definition, name)
         if definition.augmentations:  # Only when used, as above
@@ -1422,10 +1428,11 @@ def _print_epoch_losses(trainer):
 
 
 def train_yolo_detect(definition: TrainingYoloDetect, yaml_path: Path, classes: List[str],
-                      extra_info: Optional[dict] = None) -> Path:
+                      extra_info: Optional[dict] = None, trainer=None) -> Path:
     """
     Train the YOLO detector. Saved as <hash>/model.pt + <hash>/detector.json (the Ultralytics run is
     in <hash>/yolo/). extra_info: added to detector.json (what the inference of a subclass needs).
+    trainer: Ultralytics trainer class (ex: its own validation), None = the default one.
     """
     augmentations = _albumentations(definition)
     from ultralytics import YOLO  # Only needed to train or to detect
@@ -1435,6 +1442,7 @@ def train_yolo_detect(definition: TrainingYoloDetect, yaml_path: Path, classes: 
     model = YOLO(str(local_weights) if local_weights.exists() else definition.model)
     model.add_callback("on_fit_epoch_end", _print_epoch_losses)
     model.train(
+        trainer=trainer,
         data=str(yaml_path),
         imgsz=definition.input_size,
         epochs=definition.epochs,
@@ -1452,6 +1460,9 @@ def train_yolo_detect(definition: TrainingYoloDetect, yaml_path: Path, classes: 
         translate=definition.translate,
         scale=definition.scale,
         mosaic=definition.mosaic,
+        hsv_h=definition.hsv_h,
+        hsv_s=definition.hsv_s,
+        hsv_v=definition.hsv_v,
         **augmentations,
     )
 
