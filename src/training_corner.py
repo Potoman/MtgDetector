@@ -232,7 +232,7 @@ def load_yolo_pose_model():
     for path in (local_paths.RUNS_DIR / POSE_MODEL, local_paths.PUBLISH_DIR / POSE_MODEL, LEGACY_POSE_MODEL):
         if path.exists():
             return YOLO(str(path))
-    raise FileNotFoundError(f"No card corner model: train it first (yolo_pose.train_yolo_pose), {POSE_MODEL}")
+    raise FileNotFoundError(f"No card corner model: train it first (training_corner.train_yolo_pose), {POSE_MODEL}")
 
 
 def get_yolo_prediction(model, image_bgr: cv2.typing.MatLike) -> dict:

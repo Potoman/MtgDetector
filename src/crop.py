@@ -49,7 +49,7 @@ def _get_card_id(exp_code: str, illustration_id: str) -> str:
 def _get_image_path(exp_code: str, illustration_id: str) -> str:
     """
     Path of a card image: <root>/scryfall/exp/exp_<exp_code>/image/<illustration_id>.jpg
-    (same location as download.download_if_not_exist and yolo_pose). The image is downloaded
+    (same location as download.download_if_not_exist and training_corner). The image is downloaded
     from scryfall if it is not on disk yet.
     """
     path = download.EXP_DIR / f"exp_{exp_code}" / "image" / f"{illustration_id}.jpg"

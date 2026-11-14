@@ -18,7 +18,7 @@ if gpus:
         print(e)
 
 network_name = None
-selection_model = 0  # Keras models 0 to 4. YOLO Pose (model 5) is in yolo_pose.py
+selection_model = 0  # Keras models 0 to 4. YOLO Pose (model 5) is in training_corner.py
 
 def build_card_corner_model(input_shape=(400, 400, 1)):
     global network_name

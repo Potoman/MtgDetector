@@ -7,8 +7,8 @@ import cv2
 import numpy as np
 import overlay
 import training
+import training_corner
 import training_mana_cost
-import yolo_pose
 
 # Default MTG card size, in pixels.
 CARD_WIDTH = 488
@@ -159,8 +159,8 @@ if __name__ == '__main__':
             bundle = training.load_classifier(choice.path)
         label_models[choice.label] = (choice.kind, bundle)
         print(f"'{choice.label}' model loaded: {choice.path} ({len(bundle['classes'])} classes).")
-    # Card corners: YOLO Pose (yolo_pose.py).
-    model = yolo_pose.load_yolo_pose_model()
+    # Card corners: YOLO Pose (training_corner.py).
+    model = training_corner.load_yolo_pose_model()
 
     cap = cv2.VideoCapture(0)
 
@@ -184,7 +184,7 @@ if __name__ == '__main__':
         image_bgr_cropped = image_bgr[:, 80:(80 + 480), :]
         image_bgr_resized = cv2.resize(image_bgr_cropped, (400, 400), interpolation=cv2.INTER_LINEAR)
 
-        prediction = yolo_pose.get_yolo_prediction(model, image_bgr_resized)
+        prediction = training_corner.get_yolo_prediction(model, image_bgr_resized)
 
         red = overlay.add_card_border(prediction, image_bgr_resized)
 
