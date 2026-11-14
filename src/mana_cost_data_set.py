@@ -468,7 +468,7 @@ def real_window(card_image: CardImage, classes: set) -> Tuple[Optional[np.ndarra
     VAL_RECT of a real card and the (class, box) of each symbol of its mana cost in it.
 
     Only the mana cost of a real card is known, not where its symbols are. The boxes are a simple
-    guess, the same on every card (resources/mana_cost_symbol_boxes.json is not used on purpose):
+    guess, the same on every card:
     the symbols in a row, from right to left, the last one VAL_BOX_RIGHT pixels from the right of
     the card, every box VAL_BOX_TOP pixels from its top, sized as the generated ones (SYMBOL_SIZE,
     HYBRID_SIZE for a symbol with a '/') and SYMBOL_GAP apart. Close to the real place on most
