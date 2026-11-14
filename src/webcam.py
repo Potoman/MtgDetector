@@ -6,9 +6,9 @@ from typing import Dict, List
 import cv2
 import numpy as np
 import overlay
-
-# True: YOLO Pose (yolo_pose.py, Ultralytics). False: Keras models 0-4 (algo_corner_detection.py, TensorFlow).
-use_yolo = True
+import training
+import training_mana_cost
+import yolo_pose
 
 # Default MTG card size, in pixels.
 CARD_WIDTH = 488
@@ -18,7 +18,6 @@ ROOT = Path(__file__).resolve().parent.parent
 
 # Models trained by the training_<...>.py files: runs/<detect|classify>/<label>/<name>/<hash>/model.pt.
 # At launch, one model is chosen for each label (ex: 'set', 'mana_cost').
-# Only used with YOLO: training.py uses PyTorch, which must not be loaded with TensorFlow.
 YOLO_DETECT = "YOLO detect"   # TrainingYoloDetect
 BASIC_CNN = "basic CNN"       # TrainingDefinition
 MODEL_ROOTS = {YOLO_DETECT: ROOT / "runs" / "detect", BASIC_CNN: ROOT / "runs" / "classify"}
@@ -151,25 +150,17 @@ def draw_detection(card_bgr, window, boxes):
 
 
 if __name__ == '__main__':
-    # Import only the framework we need, so TensorFlow and PyTorch are never loaded together.
     # label -> (kind, loaded model)
     label_models = {}
-    if use_yolo:
-        import yolo_pose
-        import training
-        import training_mana_cost
-        for choice in choose_models():
-            if choice.kind == YOLO_DETECT:
-                bundle = training.load_detector(choice.path)
-            else:
-                bundle = training.load_classifier(choice.path)
-            label_models[choice.label] = (choice.kind, bundle)
-            print(f"'{choice.label}' model loaded: {choice.path} ({len(bundle['classes'])} classes).")
-        model = yolo_pose.load_yolo_pose_model()
-    else:
-        import algo_corner_detection
-        model = algo_corner_detection.load_border_detection_model()
-        print("Card information detection is only available with YOLO (use_yolo = True).")
+    for choice in choose_models():
+        if choice.kind == YOLO_DETECT:
+            bundle = training.load_detector(choice.path)
+        else:
+            bundle = training.load_classifier(choice.path)
+        label_models[choice.label] = (choice.kind, bundle)
+        print(f"'{choice.label}' model loaded: {choice.path} ({len(bundle['classes'])} classes).")
+    # Card corners: YOLO Pose (yolo_pose.py).
+    model = yolo_pose.load_yolo_pose_model()
 
     cap = cv2.VideoCapture(0)
 
@@ -193,12 +184,7 @@ if __name__ == '__main__':
         image_bgr_cropped = image_bgr[:, 80:(80 + 480), :]
         image_bgr_resized = cv2.resize(image_bgr_cropped, (400, 400), interpolation=cv2.INTER_LINEAR)
 
-        if use_yolo:
-            prediction = yolo_pose.get_yolo_prediction(model, image_bgr_resized)
-        else:
-            image_gray = cv2.cvtColor(image_bgr_resized, cv2.COLOR_BGR2GRAY)
-            image_norm = image_gray / 255.0
-            prediction = algo_corner_detection.get_prediction(model, image_norm)
+        prediction = yolo_pose.get_yolo_prediction(model, image_bgr_resized)
 
         red = overlay.add_card_border(prediction, image_bgr_resized)
 
