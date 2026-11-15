@@ -24,6 +24,15 @@ WINDOWS_SCRYFALL_DIR = ROOT / "scryfall"
 SYMBOLOGY_URL = "https://api.scryfall.com/symbology"
 SYMBOL_DIR_NAME = "symbol"
 
+# The set symbols (download_set_symbols), all in <scryfall dir>/set/: set_<code>.svg as downloaded,
+# set_<code>_<rarity>.svg the same symbol in the colors of a rarity (see colorize_set_symbol.py), and sets.json
+# (the scryfall sets, with "symbol_file": the downloaded file, null = the set has no symbol).
+SETS_URL = "https://api.scryfall.com/sets"
+SET_SYMBOL_URL = "https://svgs.scryfall.io/sets/{code}.svg"
+SET_DIR_NAME = "set"
+SETS_FILE_NAME = "sets.json"
+SET_SYMBOL_FILE_KEY = "symbol_file"
+
 expension = {}
 
 # Cache of <root>/scryfall/exp/exp_<exp_code>/info.json, indexed by card id.
@@ -187,15 +196,16 @@ def download_if_not_exist(exp_code: str, card_id: str) -> List[str]:
 # Card symbols (https://scryfall.com/docs/api/card-symbols/all)
 # ---------------------------------------------------------------------------
 
-def symbol_dirs() -> List[Path]:
+def symbol_dirs(name: str = SYMBOL_DIR_NAME) -> List[Path]:
     """
-    The folders that get the symbols: SCRYFALL_DIR/symbol, then <root>/scryfall/symbol. In WSL with
-    paths.json, the first one is on the Linux disk (~/mtg/scryfall/symbol) and the second one on the
-    Windows disk. A single folder when they are the same (on Windows, or without paths.json).
+    The folders that get the symbols: SCRYFALL_DIR/<name>, then <root>/scryfall/<name> (name: 'symbol'
+    or 'set'). In WSL with paths.json, the first one is on the Linux disk
+    (ex: ~/mtg/scryfall/symbol) and the second one on the Windows disk. A single folder when they are
+    the same (on Windows, or without paths.json).
     """
     dirs: List[Path] = []
     for scryfall_dir in (SCRYFALL_DIR, WINDOWS_SCRYFALL_DIR):
-        path = scryfall_dir / SYMBOL_DIR_NAME
+        path = scryfall_dir / name
         if all(path.resolve() != other.resolve() for other in dirs):
             dirs.append(path)
     return dirs
@@ -209,19 +219,23 @@ def symbol_file_stem(symbol: str) -> str:
     return re.sub(r'[<>:"\\|?*]', "_", symbol.strip("{}").replace("/", "-"))
 
 
-def list_symbols() -> List[dict]:
-    """Every card symbol of scryfall (all pages)."""
-    symbols = []
-    url = SYMBOLOGY_URL
+def _list_all(url: str) -> List[dict]:
+    """The "data" of a scryfall list (all pages)."""
+    items = []
     while url:
         response = requests.get(url, headers={**HEADERS, "Accept": "application/json"}, timeout=30)
         response.raise_for_status()
         page = response.json()
-        symbols.extend(page.get("data", []))
+        items.extend(page.get("data", []))
         url = page.get("next_page") if page.get("has_more") else None
         if url:
             time.sleep(0.1)  # Respect rate limits
-    return symbols
+    return items
+
+
+def list_symbols() -> List[dict]:
+    """Every card symbol of scryfall (all pages)."""
+    return _list_all(SYMBOLOGY_URL)
 
 
 def _write_file(path: Path, content: bytes):
@@ -306,6 +320,140 @@ def download_symbols(force: bool = False) -> Dict[str, int]:
     return counts
 
 
+# ---------------------------------------------------------------------------
+# Set symbols (https://scryfall.com/docs/api/sets)
+# ---------------------------------------------------------------------------
+
+def list_sets() -> List[dict]:
+    """Every scryfall set (code, name, released_at, set_type...)."""
+    return _list_all(SETS_URL)
+
+
+def set_symbol_file_name(code: str) -> str:
+    """File of the downloaded symbol of a set: 'set_<code>.svg'."""
+    return f"set_{code}.svg"
+
+
+def _get_set_svg(url: str) -> Tuple[Optional[bytes], str]:
+    """
+    (content, 'ok'), or (None, 'missing') when scryfall has no such file (HTTP 403 / 404: the set has
+    no symbol of its own, it's normal), or (None, 'failed') with a message (network, server...).
+    """
+    try:
+        response = requests.get(url, headers=HEADERS, timeout=30)
+    except requests.RequestException as error:
+        print(f"Error downloading {url}: {error}")
+        return None, "failed"
+    if response.status_code in (403, 404):
+        return None, "missing"
+    if response.status_code != 200 or b"<svg" not in response.content:
+        print(f"Failed to download {url}: HTTP {response.status_code}")
+        return None, "failed"
+    return response.content, "ok"
+
+
+def _load_symbol_files(dirs: List[Path]) -> Dict[str, Optional[str]]:
+    """What the previous runs found, from the first sets.json of `dirs`: code -> file (None = no symbol)."""
+    for directory in dirs:
+        path = directory / SETS_FILE_NAME
+        if path.exists():
+            with open(path, "r", encoding="utf-8") as fp:
+                return {set_data["code"]: set_data[SET_SYMBOL_FILE_KEY] for set_data in json.load(fp)
+                        if SET_SYMBOL_FILE_KEY in set_data}
+    return {}
+
+
+def download_set_symbols(codes: Optional[List[str]] = None, force: bool = False) -> Dict[str, int]:
+    """
+    The symbol of every scryfall set (or only `codes`): SET_SYMBOL_URL as set_<code>.svg, unchanged, in
+    each folder of symbol_dirs(SET_DIR_NAME), then the same symbol in the colors of each rarity in the
+    same folders: set_<code>_<rarity>.svg (colorize_set_symbol.colorize_set_symbols).
+    Many sets have no symbol of their own (tokens, promos...): it's normal. sets.json remembers them
+    ("symbol_file": null) and they are not asked again. A symbol is downloaded once, then written in
+    both folders; the files already there are kept, a file missing from one folder only is copied from
+    the other one. force: ask scryfall again for every set, and draw the rarity symbols again.
+    :return: number of sets 'downloaded', 'copied' (from the other folder), 'kept' (already everywhere),
+             'no_symbol', 'failed'.
+    """
+    dirs = symbol_dirs(SET_DIR_NAME)
+    for directory in dirs:
+        directory.mkdir(parents=True, exist_ok=True)
+    sets = list_sets()
+    by_code = {set_data["code"]: set_data for set_data in sets}
+    if codes is None:
+        wanted = list(by_code)
+    else:
+        wanted = []
+        for code in (code.strip().lower() for code in codes):
+            if code in by_code:
+                wanted.append(code)
+            else:
+                print(f"'{code}' is not a scryfall set, skipped.")
+    print(f"{len(wanted)} set symbols for: {', '.join(str(directory) for directory in dirs)}")
+
+    symbol_files = _load_symbol_files(dirs)
+    counts = {"downloaded": 0, "copied": 0, "kept": 0, "no_symbol": 0, "failed": 0}
+    no_symbol, failed = [], []
+    for code in wanted:
+        name = set_symbol_file_name(code)
+        paths = [directory / name for directory in dirs]
+        missing = paths if force else [path for path in paths if not path.exists()]
+        if not missing:
+            symbol_files[code] = name
+            counts["kept"] += 1
+            continue
+        if len(missing) == len(paths):
+            if not force and code in symbol_files and symbol_files[code] is None:
+                no_symbol.append(code)  # Already asked: scryfall has no symbol for this set
+                continue
+            content, status = _get_set_svg(SET_SYMBOL_URL.format(code=code))
+            time.sleep(0.1)  # Be nice to the API - don't flood it with requests
+            if status == "missing":
+                symbol_files[code] = None
+                no_symbol.append(code)
+                continue
+            if content is None:
+                failed.append(code)
+                continue
+            action = "downloaded"
+        else:
+            content = next(path for path in paths if path not in missing).read_bytes()
+            action = "copied"
+        for path in missing:
+            _write_file(path, content)
+        symbol_files[code] = name
+        counts[action] += 1
+        print(f"{action.capitalize()}: {code} ({by_code[code]['name']}) -> {name}")
+
+    for set_data in sets:
+        if set_data["code"] in symbol_files:
+            set_data[SET_SYMBOL_FILE_KEY] = symbol_files[set_data["code"]]
+    content = json.dumps(sets, indent=4, ensure_ascii=False).encode("utf-8")
+    for directory in dirs:
+        _write_file(directory / SETS_FILE_NAME, content)
+
+    counts["no_symbol"], counts["failed"] = len(no_symbol), len(failed)
+    print(f"Download complete. {len(wanted)} sets: {counts['downloaded']} downloaded, {counts['copied']} copied "
+          f"from the other folder, {counts['kept']} already there, {counts['no_symbol']} without symbol.")
+    if no_symbol:
+        print(f"No symbol on scryfall (normal): {' '.join(no_symbol)}")
+    if failed:
+        print(f"Failed, run it again: {' '.join(failed)}")
+
+    import colorize_set_symbol  # Here: it needs numpy, OpenCV and PyMuPDF, the rest of this file doesn't
+    colorize_set_symbol.colorize_set_symbols(wanted, force=force)
+    return counts
+
+
+def ask_set_symbols():
+    """Interactive download of the set symbols: which sets ('*' = every set)."""
+    while True:
+        answer = input("Which sets ? (codes separated by spaces, * = every set) : ").strip()
+        if answer:
+            break
+    download_set_symbols(None if answer == "*" else answer.replace(",", " ").split())
+
+
 def ask_expensions():
     """Interactive download of the cards: which set ('*' = every set), with images or not."""
     # Get the latest set
@@ -325,8 +473,8 @@ def ask_expensions():
 
 
 def ask_download() -> str:
-    """First question: 'set' (the cards of a set) or 'symbol' (every card symbol)."""
-    choices = {"1": "set", "2": "symbol"}
+    """First question: 'symbol' (every card symbol), 'card' (the cards of a set) or 'set' (the set symbols)."""
+    choices = {"1": "symbol", "2": "card", "3": "set"}
     for number, choice in choices.items():
         print(f"{number} : {choice}")
     while True:
@@ -337,7 +485,10 @@ def ask_download() -> str:
 
 
 if __name__ == "__main__":
-    if ask_download() == "symbol":
+    choice = ask_download()
+    if choice == "symbol":
         download_symbols()
-    else:
+    elif choice == "card":
         ask_expensions()
+    else:
+        ask_set_symbols()

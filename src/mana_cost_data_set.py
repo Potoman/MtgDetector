@@ -21,7 +21,7 @@ n samples, in <runs_dir>/detect/mana_cost/gen/<n>/ (in WSL: ~/mtg/runs, see loca
      MANA_COST_PARTS is in it with its probability ({X}/{Y}/{Z} 5%, a numbered mana 50%, {2/W}... 2%,
      {C} 2%, {C/W}... 1%, colored mana 80%, {W/U}... 4%, {W/P}... 3%, {W/U/P}... 1%, {S} 2%), with
      SYMBOL_REPEATS symbols (one for the numbered mana), and the symbols are sorted in CARD_ORDER.
-     The symbols come from scryfall/symbol/ (download them first: python3 src/download.py, choice 2).
+     The symbols come from scryfall/symbol/ (download them first: python3 src/download.py, choice 1: symbol).
      A new mana cost is picked while it is empty or wider than the image.
   4. The symbols in one row, SYMBOL_GAP (2) pixels apart, their centers at the same height. A
      symbol is 23 x 23 pixels (measured on real cards: ~23 px wide, centers ~25.5 px apart), a hybrid
@@ -186,7 +186,7 @@ def symbol_files(symbol_dir: Path = SYMBOL_DIR) -> List[Path]:
     excluded = {name.lower() for name in EXCLUDED}
     paths = sorted(path for path in symbol_dir.glob("*.svg") if path.stem.lower() not in excluded)
     if not paths:
-        raise FileNotFoundError(f"No symbol in {symbol_dir}: download them first (python3 src/download.py, choice 2).")
+        raise FileNotFoundError(f"No symbol in {symbol_dir}: download them first (python3 src/download.py, choice 1: symbol).")
     return paths
 
 
@@ -645,7 +645,7 @@ def build_dataset(n: int, paths: List[Path], stamp: dict) -> Tuple[Path, List[st
     for kind, pool in pools.items():
         if not pool and BACKGROUNDS.get(kind):
             raise FileNotFoundError(f"No card image of the {BACKGROUND_FRAME} frame for the '{kind}' backgrounds in "
-                                    f"{local_paths.EXP_DIR}: download some first (python3 src/download.py, choice 1).")
+                                    f"{local_paths.EXP_DIR}: download some first (python3 src/download.py, choice 2: card).")
     names = sorted({card.card["name"] for card in train_cards if card.card.get("name")})
     fonts = text_fonts()
     print(f"Backgrounds: {len(pools['art'])} cards for 'art', {len(pools['top_left'])} for 'top_left'. "
