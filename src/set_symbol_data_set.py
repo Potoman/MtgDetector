@@ -157,7 +157,7 @@ CHECK_ZOOM = 3
 # ---------------------------------------------------------------------------
 
 def symbol_dir() -> Path:
-    return download.symbol_dirs(download.SET_DIR_NAME)[0]
+    return download.symbol_dir(download.SET_DIR_NAME)
 
 
 def load_sets() -> Dict[str, dict]:
@@ -195,7 +195,7 @@ def rarities_of(released_at: Optional[str]) -> List[Optional[str]]:
 
 
 def png_dir() -> Path:
-    return download.symbol_dirs(colorize_set_symbol.PNG_DIR_NAME)[0]
+    return download.symbol_dir(colorize_set_symbol.PNG_DIR_NAME)
 
 
 def symbol_file(label: str) -> Path:

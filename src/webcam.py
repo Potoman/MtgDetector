@@ -125,8 +125,16 @@ def choose_models() -> List[ModelChoice]:
 
 
 def describe_value(label, value):
-    """Text printed for a prediction: the expansion name for 'set', the value otherwise."""
-    return f"{get_expansion_name(value)} ({value})" if label == "set" else value
+    """
+    Text printed for a prediction: the expansion name for 'set' (and the rarity of a set symbol detector
+    of training_set_symbol.py: 'dsk_rare' -> 'Duskmourn: House of Horror (dsk), rare'), the value otherwise.
+    """
+    if label != "set":
+        return value
+    code, _, rarity = value.rpartition("_")
+    if code and rarity in ("common", "uncommon", "rare", "mythic"):
+        return f"{get_expansion_name(code)} ({code}), {rarity}"
+    return f"{get_expansion_name(value)} ({value})"
 
 
 def draw_rect(card_bgr, rect):

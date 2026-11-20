@@ -17,8 +17,6 @@ ROOT = local_paths.ROOT
 SCRYFALL_DIR = local_paths.SCRYFALL_DIR
 # The cards (info.json + images): <scryfall dir>/exp/exp_<code>/.
 EXP_DIR = local_paths.EXP_DIR
-# <root>/scryfall: the Windows folder (webcam.py). In WSL with paths.json, SCRYFALL_DIR is on the Linux disk instead.
-WINDOWS_SCRYFALL_DIR = ROOT / "scryfall"
 
 # The card symbols ({T}, {W}, {W/U}...): <scryfall dir>/symbol/*.svg + symbology.json (see download_symbols).
 SYMBOLOGY_URL = "https://api.scryfall.com/symbology"
@@ -196,19 +194,12 @@ def download_if_not_exist(exp_code: str, card_id: str) -> List[str]:
 # Card symbols (https://scryfall.com/docs/api/card-symbols/all)
 # ---------------------------------------------------------------------------
 
-def symbol_dirs(name: str = SYMBOL_DIR_NAME) -> List[Path]:
+def symbol_dir(name: str = SYMBOL_DIR_NAME) -> Path:
     """
-    The folders that get the symbols: SCRYFALL_DIR/<name>, then <root>/scryfall/<name> (name: 'symbol'
-    or 'set'). In WSL with paths.json, the first one is on the Linux disk
-    (ex: ~/mtg/scryfall/symbol) and the second one on the Windows disk. A single folder when they are
-    the same (on Windows, or without paths.json).
+    The folder of the symbols: SCRYFALL_DIR/<name> (name: 'symbol', 'set' or 'set_png'). In WSL with
+    paths.json, on the Linux disk only (ex: ~/mtg/scryfall/symbol): nothing is written in <root>/scryfall.
     """
-    dirs: List[Path] = []
-    for scryfall_dir in (SCRYFALL_DIR, WINDOWS_SCRYFALL_DIR):
-        path = scryfall_dir / name
-        if all(path.resolve() != other.resolve() for other in dirs):
-            dirs.append(path)
-    return dirs
+    return SCRYFALL_DIR / name
 
 
 def symbol_file_stem(symbol: str) -> str:
@@ -260,13 +251,12 @@ def _download_svg(url: str) -> Optional[bytes]:
 
 def download_symbols(force: bool = False) -> Dict[str, int]:
     """
-    Every scryfall card symbol as an SVG file ({W/U} -> W-U.svg) in each folder of symbol_dirs(), with
-    symbology.json: what scryfall says about each symbol (english, colors, mana_value, appears_in_mana_costs...).
-    A symbol is downloaded once, then written in both folders. The files already there are kept (force:
-    download them again): a symbol missing from one folder only is copied from the other one.
-    :return: number of symbols 'downloaded', 'copied' (from the other folder), 'kept' (already everywhere), 'failed'.
+    Every scryfall card symbol as an SVG file ({W/U} -> W-U.svg) in symbol_dir(), with symbology.json:
+    what scryfall says about each symbol (english, colors, mana_value, appears_in_mana_costs...).
+    The files already there are kept (force: download them again).
+    :return: number of symbols 'downloaded', 'kept' (already there), 'failed'.
     """
-    dirs = symbol_dirs()
+    directory = symbol_dir()
     symbols = list_symbols()
     with_svg = [symbol for symbol in symbols if symbol.get("svg_uri")]
     without_svg = [symbol["symbol"] for symbol in symbols if not symbol.get("svg_uri")]
@@ -279,40 +269,31 @@ def download_symbols(force: bool = False) -> Dict[str, int]:
     if clashes:
         raise ValueError(f"Several symbols would get the same file: {clashes}. Change symbol_file_stem.")
 
-    for directory in dirs:
-        directory.mkdir(parents=True, exist_ok=True)
-    print(f"{len(with_svg)} symbols for: {', '.join(str(directory) for directory in dirs)}")
+    directory.mkdir(parents=True, exist_ok=True)
+    print(f"{len(with_svg)} symbols for: {directory}")
 
-    counts = {"downloaded": 0, "copied": 0, "kept": 0, "failed": 0}
+    counts = {"downloaded": 0, "kept": 0, "failed": 0}
     failed = []
     for symbol in with_svg:
         name = f"{symbol_file_stem(symbol['symbol'])}.svg"
-        paths = [directory / name for directory in dirs]
-        missing = paths if force else [path for path in paths if not path.exists()]
-        if not missing:
+        path = directory / name
+        if not force and path.exists():
             counts["kept"] += 1
             continue
-        if len(missing) == len(paths):
-            content = _download_svg(symbol["svg_uri"])
-            time.sleep(0.1)  # Be nice to the API - don't flood it with requests
-            if content is None:
-                failed.append(symbol["symbol"])
-                continue
-            action = "downloaded"
-        else:
-            content = next(path for path in paths if path not in missing).read_bytes()
-            action = "copied"
-        for path in missing:
-            _write_file(path, content)
-        counts[action] += 1
-        print(f"{action.capitalize()}: {symbol['symbol']} -> {name}")
+        content = _download_svg(symbol["svg_uri"])
+        time.sleep(0.1)  # Be nice to the API - don't flood it with requests
+        if content is None:
+            failed.append(symbol["symbol"])
+            continue
+        _write_file(path, content)
+        counts["downloaded"] += 1
+        print(f"Downloaded: {symbol['symbol']} -> {name}")
 
-    for directory in dirs:
-        _write_file(directory / "symbology.json", json.dumps(symbols, indent=4, ensure_ascii=False).encode("utf-8"))
+    _write_file(directory / "symbology.json", json.dumps(symbols, indent=4, ensure_ascii=False).encode("utf-8"))
 
     counts["failed"] = len(failed)
     print(f"Download complete. {len(with_svg)} symbols: {counts['downloaded']} downloaded, "
-          f"{counts['copied']} copied from the other folder, {counts['kept']} already there.")
+          f"{counts['kept']} already there.")
     if without_svg:
         print(f"No SVG on scryfall, skipped: {' '.join(without_svg)}")
     if failed:
@@ -352,32 +333,28 @@ def _get_set_svg(url: str) -> Tuple[Optional[bytes], str]:
     return response.content, "ok"
 
 
-def _load_symbol_files(dirs: List[Path]) -> Dict[str, Optional[str]]:
-    """What the previous runs found, from the first sets.json of `dirs`: code -> file (None = no symbol)."""
-    for directory in dirs:
-        path = directory / SETS_FILE_NAME
-        if path.exists():
-            with open(path, "r", encoding="utf-8") as fp:
-                return {set_data["code"]: set_data[SET_SYMBOL_FILE_KEY] for set_data in json.load(fp)
-                        if SET_SYMBOL_FILE_KEY in set_data}
-    return {}
+def _load_symbol_files(directory: Path) -> Dict[str, Optional[str]]:
+    """What the previous runs found, from the sets.json of `directory`: code -> file (None = no symbol)."""
+    path = directory / SETS_FILE_NAME
+    if not path.exists():
+        return {}
+    with open(path, "r", encoding="utf-8") as fp:
+        return {set_data["code"]: set_data[SET_SYMBOL_FILE_KEY] for set_data in json.load(fp)
+                if SET_SYMBOL_FILE_KEY in set_data}
 
 
 def download_set_symbols(codes: Optional[List[str]] = None, force: bool = False) -> Dict[str, int]:
     """
     The symbol of every scryfall set (or only `codes`): SET_SYMBOL_URL as set_<code>.svg, unchanged, in
-    each folder of symbol_dirs(SET_DIR_NAME), then the same symbol in the colors of each rarity in the
-    same folders: set_<code>_<rarity>.svg (colorize_set_symbol.colorize_set_symbols).
+    symbol_dir(SET_DIR_NAME), then the same symbol in the colors of each rarity in the same folder:
+    set_<code>_<rarity>.svg, and its PNG in set_png/ (colorize_set_symbol.colorize_set_symbols).
     Many sets have no symbol of their own (tokens, promos...): it's normal. sets.json remembers them
-    ("symbol_file": null) and they are not asked again. A symbol is downloaded once, then written in
-    both folders; the files already there are kept, a file missing from one folder only is copied from
-    the other one. force: ask scryfall again for every set, and draw the rarity symbols again.
-    :return: number of sets 'downloaded', 'copied' (from the other folder), 'kept' (already everywhere),
-             'no_symbol', 'failed'.
+    ("symbol_file": null) and they are not asked again. The files already there are kept.
+    force: ask scryfall again for every set, and draw the rarity symbols again.
+    :return: number of sets 'downloaded', 'kept' (already there), 'no_symbol', 'failed'.
     """
-    dirs = symbol_dirs(SET_DIR_NAME)
-    for directory in dirs:
-        directory.mkdir(parents=True, exist_ok=True)
+    directory = symbol_dir(SET_DIR_NAME)
+    directory.mkdir(parents=True, exist_ok=True)
     sets = list_sets()
     by_code = {set_data["code"]: set_data for set_data in sets}
     if codes is None:
@@ -389,52 +366,43 @@ def download_set_symbols(codes: Optional[List[str]] = None, force: bool = False)
                 wanted.append(code)
             else:
                 print(f"'{code}' is not a scryfall set, skipped.")
-    print(f"{len(wanted)} set symbols for: {', '.join(str(directory) for directory in dirs)}")
+    print(f"{len(wanted)} set symbols for: {directory}")
 
-    symbol_files = _load_symbol_files(dirs)
-    counts = {"downloaded": 0, "copied": 0, "kept": 0, "no_symbol": 0, "failed": 0}
+    symbol_files = _load_symbol_files(directory)
+    counts = {"downloaded": 0, "kept": 0, "no_symbol": 0, "failed": 0}
     no_symbol, failed = [], []
     for code in wanted:
         name = set_symbol_file_name(code)
-        paths = [directory / name for directory in dirs]
-        missing = paths if force else [path for path in paths if not path.exists()]
-        if not missing:
+        path = directory / name
+        if not force and path.exists():
             symbol_files[code] = name
             counts["kept"] += 1
             continue
-        if len(missing) == len(paths):
-            if not force and code in symbol_files and symbol_files[code] is None:
-                no_symbol.append(code)  # Already asked: scryfall has no symbol for this set
-                continue
-            content, status = _get_set_svg(SET_SYMBOL_URL.format(code=code))
-            time.sleep(0.1)  # Be nice to the API - don't flood it with requests
-            if status == "missing":
-                symbol_files[code] = None
-                no_symbol.append(code)
-                continue
-            if content is None:
-                failed.append(code)
-                continue
-            action = "downloaded"
-        else:
-            content = next(path for path in paths if path not in missing).read_bytes()
-            action = "copied"
-        for path in missing:
-            _write_file(path, content)
+        if not force and code in symbol_files and symbol_files[code] is None:
+            no_symbol.append(code)  # Already asked: scryfall has no symbol for this set
+            continue
+        content, status = _get_set_svg(SET_SYMBOL_URL.format(code=code))
+        time.sleep(0.1)  # Be nice to the API - don't flood it with requests
+        if status == "missing":
+            symbol_files[code] = None
+            no_symbol.append(code)
+            continue
+        if content is None:
+            failed.append(code)
+            continue
+        _write_file(path, content)
         symbol_files[code] = name
-        counts[action] += 1
-        print(f"{action.capitalize()}: {code} ({by_code[code]['name']}) -> {name}")
+        counts["downloaded"] += 1
+        print(f"Downloaded: {code} ({by_code[code]['name']}) -> {name}")
 
     for set_data in sets:
         if set_data["code"] in symbol_files:
             set_data[SET_SYMBOL_FILE_KEY] = symbol_files[set_data["code"]]
-    content = json.dumps(sets, indent=4, ensure_ascii=False).encode("utf-8")
-    for directory in dirs:
-        _write_file(directory / SETS_FILE_NAME, content)
+    _write_file(directory / SETS_FILE_NAME, json.dumps(sets, indent=4, ensure_ascii=False).encode("utf-8"))
 
     counts["no_symbol"], counts["failed"] = len(no_symbol), len(failed)
-    print(f"Download complete. {len(wanted)} sets: {counts['downloaded']} downloaded, {counts['copied']} copied "
-          f"from the other folder, {counts['kept']} already there, {counts['no_symbol']} without symbol.")
+    print(f"Download complete. {len(wanted)} sets: {counts['downloaded']} downloaded, "
+          f"{counts['kept']} already there, {counts['no_symbol']} without symbol.")
     if no_symbol:
         print(f"No symbol on scryfall (normal): {' '.join(no_symbol)}")
     if failed:

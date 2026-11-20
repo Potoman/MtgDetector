@@ -12,7 +12,7 @@ Their PNG (below) are the symbols of the dataset of the set symbol detector (set
 pasted as they are.
 
 Each colored SVG also gets its PNG, one per set and rarity: <scryfall dir>/set_png/set_<code>_<rarity>.png
-(PNG_DIR_NAME, in WSL in both folders as the SVG), PNG_SIZE x PNG_SIZE (75 x 75) pixels, transparent, the
+(PNG_DIR_NAME), PNG_SIZE x PNG_SIZE (75 x 75) pixels, transparent, the
 symbol (its outline included) PNG_SYMBOL_HEIGHT (27) pixels high, the largest height on a card, its width
 following its shape, at the center (symbol_png). A PNG says in a text chunk ("drawing") what it was made
 with (png_stamp): it is made again with its SVG, or when it is missing or outdated.
@@ -49,7 +49,7 @@ Each colored SVG says in a comment what it was drawn with (drawing_stamp: the pa
 DRAW_VERSION): a file drawn with another paint file or an older drawing is drawn again, also by
 download.py (choice 3).
 
-Run from anywhere (WSL: writes the Linux disk and the Windows disk, see download.symbol_dirs):
+Run from anywhere (WSL with paths.json: writes the Linux disk only, see download.symbol_dir):
     python3 src/colorize_set_symbol.py            (draw again every colored symbol and its PNG)
     python3 src/colorize_set_symbol.py dsk m15    (only these sets)
 """
@@ -584,25 +584,23 @@ def _up_to_date(path, stamp: str) -> bool:
 
 def colorize_set_symbols(codes: Optional[List[str]] = None, force: bool = False) -> Dict[str, int]:
     """
-    Write set_<code>_<rarity>.svg in each folder of download.symbol_dirs(SET_DIR_NAME), for every
-    downloaded set symbol (or only `codes`), and its PNG set_<code>_<rarity>.png in each folder of
-    download.symbol_dirs(PNG_DIR_NAME) (symbol_png). The files already made with the same drawing_stamp
-    (png_stamp) are kept (force: make them again).
-    The downloaded SVG and the release dates are read in the first of these folders.
+    Write set_<code>_<rarity>.svg in download.symbol_dir(SET_DIR_NAME), for every downloaded set symbol
+    (or only `codes`), next to the downloaded SVG and sets.json (release dates), and its PNG
+    set_<code>_<rarity>.png in download.symbol_dir(PNG_DIR_NAME) (symbol_png). The files already made
+    with the same drawing_stamp (png_stamp) are kept (force: make them again).
     :return: number of SVG 'drawn', 'kept' (up to date), of PNG 'png_made', 'png_kept', sets
              'before_exodus' (3 files in the colors of a common), sets 'failed'.
     """
-    dirs = download.symbol_dirs(download.SET_DIR_NAME)
-    sets_file = dirs[0] / download.SETS_FILE_NAME
+    directory = download.symbol_dir(download.SET_DIR_NAME)
+    sets_file = directory / download.SETS_FILE_NAME
     sets = json.loads(sets_file.read_text(encoding="utf-8")) if sets_file.exists() else []
     dates = first_dates(sets)
 
     wanted = None if codes is None else {code.lower() for code in codes}
     todo = [set_data for set_data in sets if set_data.get(download.SET_SYMBOL_FILE_KEY)
             and (wanted is None or set_data["code"] in wanted)]
-    png_dirs = download.symbol_dirs(PNG_DIR_NAME)
-    for directory in png_dirs:
-        directory.mkdir(parents=True, exist_ok=True)
+    png_dir = download.symbol_dir(PNG_DIR_NAME)
+    png_dir.mkdir(parents=True, exist_ok=True)
     counts = {"drawn": 0, "kept": 0, "png_made": 0, "png_kept": 0, "before_exodus": 0, "failed": 0}
     stamp, stamp_png = drawing_stamp(), png_stamp()
     for set_data in tqdm.tqdm(todo, desc="Rarity symbols", unit="set"):
@@ -612,10 +610,10 @@ def colorize_set_symbols(codes: Optional[List[str]] = None, force: bool = False)
         counts["before_exodus"] += old
         symbol = None
         for rarity in rarities:
-            paths = [directory / rarity_file_name(code, rarity) for directory in dirs]
-            missing = paths if force else [path for path in paths if not _up_to_date(path, stamp)]
-            png_paths = [directory / png_file_name(code, rarity) for directory in png_dirs]
-            png_missing = png_paths if force else [path for path in png_paths if not _png_up_to_date(path, stamp_png)]
+            path = directory / rarity_file_name(code, rarity)
+            png_path = png_dir / png_file_name(code, rarity)
+            missing = force or not _up_to_date(path, stamp)
+            png_missing = force or not _png_up_to_date(png_path, stamp_png)
             counts["kept"] += not missing
             counts["png_kept"] += not png_missing
             if not missing and not png_missing:
@@ -623,19 +621,19 @@ def colorize_set_symbols(codes: Optional[List[str]] = None, force: bool = False)
             try:
                 content = None
                 if missing:
-                    symbol = symbol or trace((dirs[0] / file_name).read_bytes())
+                    symbol = symbol or trace((directory / file_name).read_bytes())
                     content = rarity_svg(symbol, code, rarity, file_name, painted_as="common" if old else None)
-                png = symbol_png(content or paths[0].read_bytes()) if png_missing else None
+                png = symbol_png(content or path.read_bytes()) if png_missing else None
             except Exception as error:  # A broken SVG must not stop the other sets
                 tqdm.tqdm.write(f"Can't draw {file_name} ({rarity}): {error}")
                 counts["failed"] += 1
                 break
-            for path in missing:
+            if missing:
                 download._write_file(path, content)
-            for path in png_missing:
-                download._write_file(path, png)
-            counts["drawn"] += bool(missing)
-            counts["png_made"] += bool(png_missing)
+            if png_missing:
+                download._write_file(png_path, png)
+            counts["drawn"] += missing
+            counts["png_made"] += png_missing
     print(f"Rarity symbols: {counts['drawn']} drawn, {counts['kept']} up to date; PNG: {counts['png_made']} made, "
           f"{counts['png_kept']} up to date; "
           f"{counts['before_exodus']} sets before Exodus (common, uncommon, rare in the colors of a common)"
