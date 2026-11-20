@@ -1,0 +1,285 @@
+{
+    "_help": [
+        "How colorize_set_symbol.py paints the colored set symbols set_<code>_<rarity>.svg (after download.py choice 3).",
+        "These files are the symbols of the set symbol dataset (set_symbol_data_set.py).",
+        "Change it, then run colorize_set_symbol.py: the files drawn with another paint are drawn again",
+        "(and the dataset is built again, its symbols changed).",
+        "",
+        "A symbol has 3 areas: 'symbol' (the black parts of the scryfall SVG), 'inner' (the holes of the SVG,",
+        "filled unless 'none') and 'outline' (the border around it).",
+        "Each area gets a paint:",
+        "  'rarity': the rarity color of the class (rarity_colors, a gradient dark -> light -> dark),",
+        "  'rarity_white': the same as 'rarity', but white (colors.white) for a common (and before Exodus),",
+        "  'line': the line color of the rarity (line_colors: white for a common, black for the others),",
+        "  a color of \"colors\" ('white', 'black', 'gray'...: add one there to use it), or 'none'",
+        "  (outline and inner only: not drawn, transparent: no border, holes that show the background).",
+        "An area is either one paint ('rarity') or a choice with weights ({\"white\": 1, \"rarity\": 2}): the paint",
+        "with the biggest weight is used.",
+        "",
+        "styles: the named styles, a paint for each area (and optionally min_inner: the style is only used when the",
+        "inner area is at least this share of the symbol, else the rarity color could be invisible):",
+        "  black_hold_rarity__outline_black (the default style): the black of the SVG holds the rarity (black, silver,",
+        "    gold, orange), the transparent holds the background, as the outline (white, black, black, black),",
+        "  black_hold_rarity: the same, but a white outline for every rarity,",
+        "  inner_hold_rarity: the invert, the transparent holds the rarity, the black of the SVG the background",
+        "    (white, black, black, black), no outline (fra, fin),",
+        "  inner_hold_rarity_white: a black symbol, the inner area holds the rarity, white for a common, no outline (msc),",
+        "  black_hold_rarity_and_invert: the black of the SVG holds the rarity, the inner area is white for every rarity,",
+        "    the outline as black_hold_rarity (white, black, black, black), gaps closed (close_gaps), a thin black line",
+        "    inside the edge of the symbol (inline) (pip),",
+        "  black_hold_rarity__inline_black: the black of the SVG holds the rarity, a thin black line inside its edge",
+        "    (inline, inline_width), the holes and around it transparent: no inner area, no outline (mat),",
+        "  black_rarity_none: the symbol stays black, the inner area holds the rarity, no outline (csp),",
+        "  black_symbol: the symbol stays black, the inner area and the outline hold the rarity (dft),",
+        "  old: before Exodus, the 1993 frame (arn, atq, leg, drk, vis): a black symbol, white inner area, no outline,",
+        "  old_thin_border: before Exodus (fem, ice, all): a black symbol, white inner area, a thin white outline,",
+        "  black_gray: a black symbol, gray inner area, a thin gray outline (hml).",
+        "outline_width (optional, in a style): the outline width, times the usual one (1.1 px when the symbol is 27 px",
+        "  high): 1 by default, 0.5 = half (thin), at most 3.",
+        "close_gaps (optional, in a style, false by default): true = the gaps of the symbol up to twice the outline are",
+        "  closed, the regions they then enclose are inner area too (pip: the face of Vault Boy, open beside the ears).",
+        "inline (optional, in a style, no key = no line): a paint ('black', 'white', 'line', 'rarity'...): a thin line",
+        "  inside the edge of the symbol area (the black of the SVG: its outer edge and the edge of its holes), as the",
+        "  outline but inside; the parts of the symbol thinner than twice the line are all in this paint.",
+        "inline_width (optional, in a style with an inline): its width, times the usual outline: 0.5 by default (0.56 px",
+        "  when the symbol is 27 px high), at most 3.",
+        "set (optional, in a style): the set codes that use this style, ex: [\"csp\"]. It comes before anything else",
+        "  (sets.<code>.style, style), so a set code is in the \"set\" of one style only.",
+        "style: the style of every set (a name, or a choice with weights {\"black_hold_rarity\": 2, ...}: the usable",
+        "one with the biggest weight).",
+        "Before Exodus, common, uncommon and rare are drawn, all 3 in the colors of a common.",
+        "",
+        "sets: what is different for some sets (by their code), each key optional:",
+        "  rarity_colors, line_colors: replace those of some rarities only,",
+        "  style: replace the default style for the set (unless the set is in the \"set\" of a style).",
+        "  dom (Dominaria, 2018): the common is white with a black outline (its rarity color is white, its line black).",
+        "  dft (Aetherdrift): black_symbol, white for a common.",
+        "Colors are RGB 0-255. \"colors\" must have white and black (line_colors, rarity_white), its other colors are",
+        "optional (a line_colors value is one of them too)."
+    ],
+    "colors": {
+        "white": [
+            245,
+            245,
+            245
+        ],
+        "black": [
+            16,
+            16,
+            16
+        ],
+        "gray": [
+            77,
+            77,
+            77
+        ]
+    },
+    "rarity_colors": {
+        "common": {
+            "dark": [
+                24,
+                22,
+                22
+            ],
+            "light": null
+        },
+        "uncommon": {
+            "dark": [
+                112,
+                127,
+                142
+            ],
+            "light": [
+                208,
+                224,
+                232
+            ]
+        },
+        "rare": {
+            "dark": [
+                140,
+                110,
+                56
+            ],
+            "light": [
+                226,
+                196,
+                116
+            ]
+        },
+        "mythic": {
+            "dark": [
+                192,
+                56,
+                22
+            ],
+            "light": [
+                243,
+                140,
+                24
+            ]
+        }
+    },
+    "line_colors": {
+        "common": "white",
+        "uncommon": "black",
+        "rare": "black",
+        "mythic": "black"
+    },
+    "styles": {
+        "black_hold_rarity": {
+            "symbol": "rarity",
+            "inner": "line",
+            "outline": "white"
+        },
+        "black_hold_rarity__outline_black": {
+            "symbol": "rarity",
+            "inner": "line",
+            "outline": "line",
+            "set": [
+                "eoe"
+            ]
+        },
+        "black_hold_rarity_and_invert": {
+            "symbol": "rarity",
+            "inner": "white",
+            "outline": "line",
+            "close_gaps": true,
+            "inline": "black",
+            "set": [
+                "pip"
+            ]
+        },
+        "black_hold_rarity__outline_white": {
+            "symbol": "rarity",
+            "inner": "white",
+            "outline": "white",
+            "set": [
+                "apc",
+                "exo",
+                "inv",
+                "jud",
+                "lgn",
+                "mmq",
+                "nem",
+                "ody",
+                "ons",
+                "pcy",
+                "scg",
+                "tor",
+                "uds",
+                "ulg",
+                "usg"
+            ]
+        },
+        "black_hold_rarity__outline_white__close_gap": {
+            "symbol": "rarity",
+            "inner": "white",
+            "outline": "white",
+            "close_gaps": true,
+            "set": [
+                "pls"
+            ]
+        },
+        "black_hold_rarity__inline_black": {
+            "symbol": "rarity",
+            "inner": "none",
+            "inline": "black",
+            "inline_width": 0.3,
+            "outline": "none",
+            "set": [
+                "mat"
+            ]
+        },
+        "black_hold_rarity_white__outline_black": {
+            "symbol": "rarity_white",
+            "inner": "line",
+            "outline": "line",
+            "set": [
+                "dom"
+            ]
+        },
+        "inner_hold_rarity": {
+            "symbol": "line",
+            "inner": "rarity",
+            "outline": "none",
+            "set": [
+                "fra",
+                "fin",
+                "j25",
+                "drc",
+                "inr"
+            ]
+        },
+        "inner_hold_rarity_white": {
+            "symbol": "black",
+            "inner": "rarity_white",
+            "outline": "none",
+            "set": [
+                "msc",
+                "spm"
+            ]
+        },
+        "black_rarity_none": {
+            "symbol": "black",
+            "inner": "rarity",
+            "outline": "none",
+            "set": [
+                "csp"
+            ]
+        },
+        "black_symbol": {
+            "symbol": "black",
+            "inner": "rarity",
+            "outline": "rarity"
+        },
+        "old": {
+            "symbol": "black",
+            "inner": "white",
+            "outline": "none",
+            "set": [
+                "arn",
+                "atq",
+                "leg",
+                "drk",
+                "vis"
+            ]
+        },
+        "old_thin_border": {
+            "symbol": "black",
+            "inner": "white",
+            "outline": "white",
+            "outline_width": 0.5,
+            "set": [
+                "fem",
+                "ice",
+                "all"
+            ]
+        },
+        "black_gray": {
+            "symbol": "black",
+            "inner": "gray",
+            "outline": "gray",
+            "outline_width": 0.5,
+            "set": [
+                "hml"
+            ]
+        }
+    },
+    "style": "black_hold_rarity__outline_black",
+    "sets": {
+        "dft": {
+            "rarity_colors": {
+                "common": {
+                    "dark": [
+                        245,
+                        245,
+                        245
+                    ],
+                    "light": null
+                }
+            },
+            "style": "black_symbol"
+        }
+    }
+}
