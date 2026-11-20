@@ -72,6 +72,11 @@
             77,
             77,
             77
+        ],
+        "light_gray": [
+            100,
+            100,
+            100
         ]
     },
     "rarity_colors": {
@@ -217,7 +222,8 @@
             "outline": "none",
             "set": [
                 "msc",
-                "spm"
+                "spm",
+                "tle"
             ]
         },
         "black_rarity_none": {
@@ -252,8 +258,17 @@
             "outline_width": 0.5,
             "set": [
                 "fem",
-                "ice",
                 "all"
+            ]
+        },
+        "old_inline_thin_border": {
+            "symbol": "gray",
+            "inner": "white",
+            "inline": "light_gray",
+            "inline_width": 0.5,
+            "outline": "none",
+            "set": [
+                "ice"
             ]
         },
         "black_gray": {
