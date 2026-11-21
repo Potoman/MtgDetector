@@ -5,6 +5,7 @@ from typing import Dict, List
 
 import cv2
 import numpy as np
+import local_paths
 import overlay
 import training
 import training_corner
@@ -14,13 +15,11 @@ import training_mana_cost
 CARD_WIDTH = 488
 CARD_HEIGHT = 680
 
-ROOT = Path(__file__).resolve().parent.parent
-
 # Models trained by the training_<...>.py files: runs/<detect|classify>/<label>/<name>/<hash>/model.pt.
 # At launch, one model is chosen for each label (ex: 'set', 'mana_cost').
 YOLO_DETECT = "YOLO detect"   # TrainingYoloDetect
 BASIC_CNN = "basic CNN"       # TrainingDefinition
-MODEL_ROOTS = {YOLO_DETECT: ROOT / "runs" / "detect", BASIC_CNN: ROOT / "runs" / "classify"}
+MODEL_ROOTS = {YOLO_DETECT: local_paths.RUNS_DIR / "detect", BASIC_CNN: local_paths.RUNS_DIR / "classify"}
 # Below this confidence, the prediction is not printed.
 MIN_CONFIDENCE = 0.5
 
@@ -62,7 +61,7 @@ def get_expansion_name(exp_code):
     if exp_code not in _expansion_names:
         name = exp_code
         try:
-            with open(ROOT / "scryfall" / "exp" / f"exp_{exp_code}" / "info.json", "r", encoding="utf-8") as fp:
+            with open(local_paths.EXP_DIR / f"exp_{exp_code}" / "info.json", "r", encoding="utf-8") as fp:
                 cards = json.load(fp)
             if cards:
                 name = cards[0].get("set_name", exp_code)

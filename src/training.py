@@ -51,9 +51,7 @@ The trainings are defined in the training_<...>.py files (ex: training_set.py), 
 steps of this one and are run from there. A training with its own way to choose the cards or to
 build its boxes subclasses TrainingYoloDetect (see extra_fields).
 
-Folders: <root>/scryfall and <root>/runs below are the defaults. In WSL, paths.json moves them to the
-Linux disk (much faster), and every trained model is then published into <root>/runs for webcam.py
-on Windows (see local_paths.py).
+Folders: <root>/scryfall and <root>/runs, both inside the repository (see local_paths.py).
 
 Not run directly: run a training_<...>.py file (ex: python3 src/training_set.py).
 """
@@ -83,11 +81,6 @@ SCRYFALL_DIR = download.SCRYFALL_DIR
 EXP_DIR = download.EXP_DIR
 OUTPUT_DIR = local_paths.RUNS_DIR / "classify"
 DETECT_OUTPUT_DIR = local_paths.RUNS_DIR / "detect"  # TrainingYoloDetect
-# Files copied to <root>/runs for webcam.py when the trainings run elsewhere (see local_paths.publish):
-# what webcam.py reads, the small result files (curves, confusion matrix, balance), the model last.
-PUBLISHED_CLASSIFIER_FILES = ["training.json", "model.pt"]
-PUBLISHED_DETECTOR_FILES = ["training.json", "detector.json", "dataset/balance.json", "yolo/args.yaml",
-                            "yolo/results.csv", "yolo/*.png", "yolo/*.jpg", "model.pt"]
 CROPS_PNG_DIR = "crops"  # Name of the PNG crops folder, in runs/classify/<label>/
 
 # Reference card size of the rectangle coordinates (size of a scryfall 'normal' image).
@@ -983,7 +976,6 @@ def train_model(definition: TrainingDefinition, samples: List[Sample]) -> Path:
     with open(output_dir / "samples.json", "w", encoding="utf-8") as fp:
         json.dump([{"key": list(s.key), "image": s.image_path} for s in samples], fp, indent=4)
     print(f"[{definition.name}] Model saved: {model_path}")
-    local_paths.publish(output_dir, PUBLISHED_CLASSIFIER_FILES)
     return model_path
 
 
@@ -1480,7 +1472,6 @@ def train_yolo_detect(definition: TrainingYoloDetect, yaml_path: Path, classes: 
             **(extra_info or {}),
         }, fp, indent=4)
     print(f"[{definition.name}] Model saved: {model_path}")
-    local_paths.publish(output_dir, PUBLISHED_DETECTOR_FILES)
     return model_path
 
 

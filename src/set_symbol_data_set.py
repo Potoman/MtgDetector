@@ -6,7 +6,7 @@ Dataset of the set symbol detector: generated images to train, real cards to val
 Also built by the 'set_gen' training of training_set_symbol.py, which trains on it.
 The detector finds the set symbol (expansion symbol), its box, and the rarity shown by its color.
 
-n samples in <runs_dir>/detect/set/gen/<n>_val<VAL>_nosym<NOSYM>/ (in WSL: ~/mtg/runs, see local_paths.py),
+n samples in <root>/runs/detect/set/gen/<n>_val<VAL>_nosym<NOSYM>/,
 ex: gen/80000_val2.5_nosym5/: VAL percent of them are real cards for the validation, the others are
 generated for the training, NOSYM percent of each split has no set symbol.
 - The symbols: the PNG files of scryfall/set_png/, set_<icon>_<rarity>.png, made by colorize_set_symbol.py
@@ -134,7 +134,7 @@ TYPE_LINE_SHIFT = 16    # "type_line": up to this many pixels above / below the 
 TEXT_RATIO = 0.15
 TEXT_LINES = (1, 3)
 TEXT_SIZES = (10, 22)
-TEXT_FONT_DIRS = ["/mnt/c/Windows/Fonts", "C:/Windows/Fonts", "/usr/share/fonts/truetype/dejavu"]
+TEXT_FONT_DIRS = ["/mnt/c/Windows/Fonts", "/usr/share/fonts/truetype/dejavu"]
 TEXT_FONT_FILES = ["timesbd.ttf", "times.ttf", "georgiab.ttf", "georgia.ttf", "palab.ttf", "cambriab.ttf",
                    "DejaVuSerif-Bold.ttf", "DejaVuSerif.ttf", "DejaVuSans-Bold.ttf"]
 HERSHEY_FONTS = [cv2.FONT_HERSHEY_TRIPLEX, cv2.FONT_HERSHEY_COMPLEX, cv2.FONT_HERSHEY_DUPLEX]

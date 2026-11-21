@@ -1,7 +1,7 @@
 """
 Mana cost detection: a YOLO detector that finds each mana symbol of the mana cost, at the top right
 of a straightened card. One box and one class per {...} symbol of the mana cost: '{1}{W}{W}' -> 3 boxes,
-classes '1', 'W', 'W'. Uses the YOLO detect steps of training.py (stamps, training, publishing).
+classes '1', 'W', 'W'. Uses the YOLO detect steps of training.py (stamps, training).
 
 'mana_cost_gen' (ManaCostGenTraining): trained on generated images only and validated on real cards
 only, with the dataset of mana_cost_data_set.py (runs/detect/mana_cost/gen/<n>/, n asked at launch,

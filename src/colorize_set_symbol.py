@@ -1,7 +1,7 @@
 """
 Set symbols (expansion symbols) in the colors of the rarities, from the black SVG files of scryfall.
 
-download.py (choice 3: set) downloads them into <scryfall dir>/set/: set_<code>.svg as downloaded, and
+download.py (choice 3: set) downloads them into <root>/scryfall/set/: set_<code>.svg as downloaded, and
 sets.json (the scryfall sets: release date, type... and "symbol_file"). This file adds, in the same
 folder, one SVG per rarity: set_<code>_<rarity>.svg
 - common, uncommon, rare: every set. Before Exodus (1998, the first set with rarity colors), from the
@@ -11,7 +11,7 @@ folder, one SVG per rarity: set_<code>_<rarity>.svg
 Their PNG (below) are the symbols of the dataset of the set symbol detector (set_symbol_data_set.py),
 pasted as they are.
 
-Each colored SVG also gets its PNG, one per set and rarity: <scryfall dir>/set_png/set_<code>_<rarity>.png
+Each colored SVG also gets its PNG, one per set and rarity: <root>/scryfall/set_png/set_<code>_<rarity>.png
 (PNG_DIR_NAME), PNG_SIZE x PNG_SIZE (75 x 75) pixels, transparent, the
 symbol (its outline included) PNG_SYMBOL_HEIGHT (27) pixels high, the largest height on a card, its width
 following its shape, at the center (symbol_png). A PNG says in a text chunk ("drawing") what it was made
@@ -49,7 +49,7 @@ Each colored SVG says in a comment what it was drawn with (drawing_stamp: the pa
 DRAW_VERSION): a file drawn with another paint file or an older drawing is drawn again, also by
 download.py (choice 3).
 
-Run from anywhere (WSL with paths.json: writes the Linux disk only, see download.symbol_dir):
+Run from anywhere:
     python3 src/colorize_set_symbol.py            (draw again every colored symbol and its PNG)
     python3 src/colorize_set_symbol.py dsk m15    (only these sets)
 """
@@ -101,7 +101,7 @@ OUTLINE = 0.04515625    # Outline width, share of the height of the symbol: 1.1 
                         # included) is 27 px high, the size of the dataset (24.8 + 2 x 1.1), whatever its width
 MAX_OUTLINE_WIDTH = 3.0 # Largest outline_width of a style (times OUTLINE): the room left around the traced symbol
 # The PNG of each colored SVG (symbol_png)
-PNG_DIR_NAME = "set_png"    # <scryfall dir>/set_png/set_<code>_<rarity>.png
+PNG_DIR_NAME = "set_png"    # <root>/scryfall/set_png/set_<code>_<rarity>.png
 PNG_SIZE = 75               # Pixels, square, transparent
 PNG_SYMBOL_HEIGHT = 27      # Height of the symbol in the PNG, its outline included: the largest on a card
 PNG_RENDER_SIZE = 512       # The SVG is drawn this big (longest side), then reduced: smooth edges

@@ -13,16 +13,16 @@ HEADERS = {"User-Agent": "mtg-corner-detector/1.0"}
 
 # Project root (<root>), independent of the current working directory.
 ROOT = local_paths.ROOT
-# <root>/scryfall unless paths.json says otherwise (see local_paths.py).
+# <root>/scryfall (see local_paths.py).
 SCRYFALL_DIR = local_paths.SCRYFALL_DIR
-# The cards (info.json + images): <scryfall dir>/exp/exp_<code>/.
+# The cards (info.json + images): <root>/scryfall/exp/exp_<code>/.
 EXP_DIR = local_paths.EXP_DIR
 
-# The card symbols ({T}, {W}, {W/U}...): <scryfall dir>/symbol/*.svg + symbology.json (see download_symbols).
+# The card symbols ({T}, {W}, {W/U}...): <root>/scryfall/symbol/*.svg + symbology.json (see download_symbols).
 SYMBOLOGY_URL = "https://api.scryfall.com/symbology"
 SYMBOL_DIR_NAME = "symbol"
 
-# The set symbols (download_set_symbols), all in <scryfall dir>/set/: set_<code>.svg as downloaded,
+# The set symbols (download_set_symbols), all in <root>/scryfall/set/: set_<code>.svg as downloaded,
 # set_<code>_<rarity>.svg the same symbol in the colors of a rarity (see colorize_set_symbol.py), and sets.json
 # (the scryfall sets, with "symbol_file": the downloaded file, null = the set has no symbol).
 SETS_URL = "https://api.scryfall.com/sets"
@@ -196,8 +196,7 @@ def download_if_not_exist(exp_code: str, card_id: str) -> List[str]:
 
 def symbol_dir(name: str = SYMBOL_DIR_NAME) -> Path:
     """
-    The folder of the symbols: SCRYFALL_DIR/<name> (name: 'symbol', 'set' or 'set_png'). In WSL with
-    paths.json, on the Linux disk only (ex: ~/mtg/scryfall/symbol): nothing is written in <root>/scryfall.
+    The folder of the symbols: SCRYFALL_DIR/<name> (name: 'symbol', 'set' or 'set_png').
     """
     return SCRYFALL_DIR / name
 

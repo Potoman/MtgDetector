@@ -18,15 +18,11 @@ import json
 import re
 from collections import Counter
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Dict, List, Optional
 
 import local_paths
 
-# Project root (<root>), independent of the current working directory.
-ROOT = Path(__file__).resolve().parent.parent
-SCRYFALL_DIR = local_paths.SCRYFALL_DIR  # <root>/scryfall unless paths.json says otherwise
-EXP_DIR = local_paths.EXP_DIR            # <scryfall dir>/exp
+EXP_DIR = local_paths.EXP_DIR  # <root>/scryfall/exp
 
 RARITIES = ["common", "uncommon", "rare", "mythic", "special", "bonus"]
 

@@ -1,5 +1,5 @@
-import pathlib
 import card
+import local_paths
 import cv2
 import noise
 import numpy as np
@@ -24,7 +24,7 @@ def generate_data_set(count) -> tf.data.Dataset:
 
 
 def generate_gray_dataset(exp_code: str, id: int, size: int) -> tf.data.Dataset:
-    path = pathlib.Path("/mnt/e/dataset/mtg/", exp_code, "400_400_1__8", str(size), f"ds_{id}.ds")
+    path = local_paths.RUNS_DIR / "keras_dataset" / exp_code / "400_400_1__8" / str(size) / f"ds_{id}.ds"
     if path.exists():
         return tf.data.experimental.load(str(path))
 

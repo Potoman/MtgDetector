@@ -8,7 +8,6 @@ libraries clash.
 import json
 import os
 import random
-from pathlib import Path
 from typing import List, Optional, Tuple, Union
 
 import cv2
@@ -19,11 +18,8 @@ import download
 import local_paths
 import noise
 
-# Card corner model, in runs_dir (where it is trained) and in <root>/runs (published for webcam.py).
-POSE_MODEL = Path("pose") / "card_corners" / "weights" / "best.pt"
-POSE_PUBLISHED_FILES = ["args.yaml", "results.csv", "*.png", "*.jpg", "weights/best.pt"]
-# Where the model was trained before local_paths.py (relative project of Ultralytics).
-LEGACY_POSE_MODEL = local_paths.ROOT / "runs" / "pose" / "runs" / "pose" / "card_corners" / "weights" / "best.pt"
+# Card corner model, written by train_yolo_pose.
+POSE_MODEL = local_paths.RUNS_DIR / "pose" / "card_corners" / "weights" / "best.pt"
 
 
 def _as_list(values) -> Optional[List[str]]:
@@ -223,16 +219,14 @@ def train_yolo_pose(count: int = 2000, exp_code: Union[str, List[str]] = "*",
         name="card_corners",
         exist_ok=True,
     )
-    local_paths.publish(local_paths.RUNS_DIR / "pose" / "card_corners", POSE_PUBLISHED_FILES)
     return model
 
 
 def load_yolo_pose_model():
-    """The card corner model: trained here, else published into <root>/runs, else the one of the previous version."""
-    for path in (local_paths.RUNS_DIR / POSE_MODEL, local_paths.PUBLISH_DIR / POSE_MODEL, LEGACY_POSE_MODEL):
-        if path.exists():
-            return YOLO(str(path))
-    raise FileNotFoundError(f"No card corner model: train it first (training_corner.train_yolo_pose), {POSE_MODEL}")
+    """The card corner model (POSE_MODEL), trained by train_yolo_pose."""
+    if not POSE_MODEL.exists():
+        raise FileNotFoundError(f"No card corner model: train it first (training_corner.train_yolo_pose), {POSE_MODEL}")
+    return YOLO(str(POSE_MODEL))
 
 
 def get_yolo_prediction(model, image_bgr: cv2.typing.MatLike) -> dict:

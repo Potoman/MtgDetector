@@ -5,7 +5,7 @@ Dataset of the mana cost detector: generated images to train, real cards to vali
 
 Also built by the 'mana_cost_gen' training of training_mana_cost.py, which trains on it.
 
-n samples, in <runs_dir>/detect/mana_cost/gen/<n>/ (in WSL: ~/mtg/runs, see local_paths.py):
+n samples, in <root>/runs/detect/mana_cost/gen/<n>/:
 - train: n - n_val generated images of IMAGE_WIDTH x IMAGE_HEIGHT (300 x 110):
   1. Background (BACKGROUNDS), 25% each:
      - "art": a random card image of the 2015 frame (on disk), resized to CARD_WIDTH x CARD_HEIGHT
@@ -137,7 +137,7 @@ TOP_LEFT_MARGIN = 5         # Pixels between TOP_LEFT_BOX and the mana cost of t
 TEXT_RATIO = 0.15
 TEXT_LINES = (1, 4)
 TEXT_SIZES = (12, 26)
-TEXT_FONT_DIRS = ["/mnt/c/Windows/Fonts", "C:/Windows/Fonts", "/usr/share/fonts/truetype/dejavu"]
+TEXT_FONT_DIRS = ["/mnt/c/Windows/Fonts", "/usr/share/fonts/truetype/dejavu"]
 TEXT_FONT_FILES = ["timesbd.ttf", "times.ttf", "georgiab.ttf", "georgia.ttf", "palab.ttf", "cambriab.ttf",
                    "arialbd.ttf", "DejaVuSerif-Bold.ttf", "DejaVuSerif.ttf", "DejaVuSans-Bold.ttf"]
 HERSHEY_FONTS = [cv2.FONT_HERSHEY_TRIPLEX, cv2.FONT_HERSHEY_COMPLEX, cv2.FONT_HERSHEY_DUPLEX]

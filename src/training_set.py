@@ -35,7 +35,7 @@ def definitions() -> List[Union[TrainingYoloDetect, TrainingDefinition]]:
             batch_size=32,
             blur_kernels=[1, 3],
             downscale=[0.35, 0.45, 0.6],
-            cache="ram",  # About 0.8 GB: no slow /mnt/c read after the first epoch
+            cache="ram",  # About 0.8 GB: no disk read after the first epoch
         ),
         # Expansion, read on the same symbol, with the basic CNN (runs/classify/set/set/).
         # The symbol color depends on the rarity.
