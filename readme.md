@@ -67,6 +67,11 @@ source .venvwsl/bin/activate
 python3 src/webcam.py
 ```
 
+The 'Reshaped red' window shows the straightened card and, on its right, the mana cost, rarity and set read,
+then the possible cards found in the local scryfall data (`src/search.py`, offline) once the set and the
+mana cost are read. Every downloaded expansion printing the read set symbol is searched (ex: `dsk` symbol:
+`dsk` and its promos `pdsk`).
+
 # Study
 
 The result with Yolo Pose is really good.

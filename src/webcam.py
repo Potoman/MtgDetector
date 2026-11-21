@@ -1,12 +1,17 @@
+import functools
 import json
+import unicodedata
+from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List
+from typing import Collection, Dict, List, Optional
 
 import cv2
 import numpy as np
 import local_paths
 import overlay
+import search
+import set_symbol_data_set
 import training
 import training_corner
 import training_mana_cost
@@ -20,6 +25,19 @@ CARD_HEIGHT = 680
 MODEL_ROOT = local_paths.RUNS_DIR / "detect"
 # Below this confidence, the prediction is not printed.
 MIN_CONFIDENCE = 0.5
+
+# Panel drawn on the right of the reshaped card (window 'Reshaped red'): the values read and the possible cards.
+PANEL_WIDTH = 520
+PANEL_MARGIN = 12
+PANEL_FONT = cv2.FONT_HERSHEY_SIMPLEX
+HEADER_SCALE, HEADER_STEP = 0.6, 30     # Font scale and line height (pixels) of the values read
+VALUE_X = 130                           # x of the values read, after their name
+ROW_SCALE, ROW_STEP = 0.5, 21           # Font scale and line height (pixels) of the card list
+COLUMN_GAP = 14
+WHITE, GRAY = (255, 255, 255), (150, 150, 150)
+# Rarity written in the color of the set symbol (BGR).
+RARITY_COLORS = {"common": (230, 230, 230), "uncommon": (215, 200, 180), "rare": (60, 190, 230),
+                 "mythic": (30, 110, 240)}
 
 _expansion_names = {}
 
@@ -143,6 +161,124 @@ def draw_detection(card_bgr, window, boxes):
         cv2.rectangle(card_bgr, box[:2], (box[2] - 1, box[3] - 1), color, 1)
 
 
+@functools.lru_cache(maxsize=None)
+def icon_exp_codes() -> Dict[str, List[str]]:
+    """
+    icon -> the downloaded expansions printing that set symbol (scryfall/set/sets.json), ex: 'dsk' ->
+    ['adsk', 'dsk', 'pdsk', 'tdsk'], 'tsp' -> ['tsb', 'tsp']: the set detector reads the symbol, not the
+    expansion. Without sets.json, the icon is the expansion code.
+    """
+    try:
+        sets = set_symbol_data_set.load_sets()
+    except FileNotFoundError:
+        sets = {}
+    by_icon = defaultdict(list)
+    for exp_code in search.list_exp_codes():
+        by_icon[set_symbol_data_set.icon_of(sets[exp_code]) if exp_code in sets else exp_code].append(exp_code)
+    return dict(by_icon)
+
+
+@functools.lru_cache(maxsize=64)
+def find_cards(icon: str, rarity: Optional[str], mana_cost: Optional[str]) -> List[dict]:
+    """
+    The cards of the local scryfall data (search.py) printing the set symbol `icon`, with that rarity and mana
+    cost (None: any), sorted by expansion then collector number. Cached: called every frame.
+    """
+    cards = []
+    for exp_code in icon_exp_codes().get(icon, []):
+        cards += search.search(search.SearchCriteria(exp_code, rarity, mana_cost))
+    return cards
+
+
+def _ascii(text: str) -> str:
+    """cv2.putText only draws ASCII: 'Lim-Dûl' -> 'Lim-Dul', 'Æther' -> 'AEther'."""
+    text = text.replace("Æ", "AE").replace("æ", "ae")
+    return unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
+
+
+def _text_width(text: str, scale: float) -> int:
+    return cv2.getTextSize(text, PANEL_FONT, scale, 1)[0][0]
+
+
+def _put_text(image, text: str, x: int, y: int, scale: float, color, max_width: int):
+    """Write `text` with its baseline at (x, y), cut with '...' to fit in max_width pixels."""
+    text = _ascii(text)
+    while len(text) > 3 and _text_width(text, scale) > max_width:
+        text = text[:-4] + "..."
+    cv2.putText(image, text, (x, y), PANEL_FONT, scale, color, 1, cv2.LINE_AA)
+
+
+def draw_card_list(read: Dict[str, str], labels: Collection[str], card_detected: bool, height: int) -> np.ndarray:
+    """
+    Panel shown on the right of the reshaped card. On top, what was read: mana cost, rarity and set. Below,
+    once the set (with its rarity) and the mana cost are read, the matching cards of the local scryfall data.
+    :param read: last value read for each label ('set': '<icon>_<rarity>' or '<icon>', 'mana_cost': '{1}{W}{W}')
+    :param labels: the labels having a model: the value of a label without model is not waited for
+    :param card_detected: False when no card is detected
+    :param height: height of the panel (the one of the reshaped card)
+    """
+    panel = np.zeros((height, PANEL_WIDTH, 3), dtype=np.uint8)
+    right = PANEL_WIDTH - PANEL_MARGIN
+
+    def unknown(label):
+        return "?" if label in labels else "(no model)"
+
+    icon, rarity = set_symbol_data_set.parse_class(read["set"]) if "set" in read else (None, None)
+    mana_cost = read.get("mana_cost")
+    if icon is None:
+        set_text, rarity_text = unknown("set"), unknown("set")
+    else:
+        set_text = f"{get_expansion_name(icon)} ({icon})"
+        rarity_text = rarity or "any (old symbol)"
+    header = [("Mana cost", mana_cost or unknown("mana_cost"), WHITE),
+              ("Rarity", rarity_text, RARITY_COLORS.get(rarity, WHITE)),
+              ("Set", set_text, WHITE)]
+    y = PANEL_MARGIN
+    for name, value, color in header:
+        y += HEADER_STEP
+        _put_text(panel, name, PANEL_MARGIN, y, HEADER_SCALE, GRAY, VALUE_X - PANEL_MARGIN)
+        _put_text(panel, value, VALUE_X, y, HEADER_SCALE, color, right - VALUE_X)
+    y += HEADER_STEP // 2
+    cv2.line(panel, (PANEL_MARGIN, y), (right, y), GRAY, 1)
+    y += HEADER_STEP
+
+    def message(text):
+        _put_text(panel, text, PANEL_MARGIN, y, ROW_SCALE, GRAY, right - PANEL_MARGIN)
+        return panel
+
+    if not card_detected:
+        return message("No card")
+    if "set" not in labels:
+        return message("No 'set' model: no search")
+    waiting = [label for label in ("set", "mana_cost") if label in labels and label not in read]
+    if waiting:
+        return message(f"Reading the {' and the '.join(label.replace('_', ' ') for label in waiting)}...")
+    if icon not in icon_exp_codes():
+        return message(f"No expansion of the '{icon}' symbol in scryfall/exp: run src/download.py")
+
+    cards = find_cards(icon, rarity, mana_cost)
+    _put_text(panel, f"{len(cards)} possible card(s)", PANEL_MARGIN, y, ROW_SCALE, WHITE, right - PANEL_MARGIN)
+    y += ROW_STEP + 4
+
+    # Columns: expansion (only when several), collector number, name.
+    max_rows = (height - PANEL_MARGIN - y) // ROW_STEP + 1
+    shown = cards if len(cards) <= max_rows else cards[:max_rows - 1]
+    several_sets = len({card.get("set") for card in cards}) > 1
+    rows = [([card.get("set", "")] if several_sets else []) + [card.get("collector_number", ""), card.get("name", "")]
+            for card in shown]
+    xs = [PANEL_MARGIN]
+    for column in list(zip(*rows))[:-1]:
+        xs.append(xs[-1] + max(_text_width(_ascii(value), ROW_SCALE) for value in column) + COLUMN_GAP)
+    for row in rows:
+        for x, value, color in zip(xs, row, [GRAY] * (len(row) - 1) + [WHITE]):
+            _put_text(panel, value, x, y, ROW_SCALE, color, right - x)
+        y += ROW_STEP
+    if len(shown) < len(cards):
+        _put_text(panel, f"... and {len(cards) - len(shown)} more", PANEL_MARGIN, y, ROW_SCALE, GRAY,
+                  right - PANEL_MARGIN)
+    return panel
+
+
 if __name__ == '__main__':
     # label -> loaded model
     label_models = {}
@@ -189,7 +325,8 @@ if __name__ == '__main__':
         scale_x = image_bgr_cropped.shape[1] / image_bgr_resized.shape[1]
         scale_y = image_bgr_cropped.shape[0] / image_bgr_resized.shape[0]
         reshaped = reshape_card(prediction, image_bgr_cropped, scale_x, scale_y)
-        if reshaped is None:
+        card_detected = reshaped is not None
+        if not card_detected:
             reshaped = no_image()
             last_values.clear()
         else:
@@ -211,7 +348,9 @@ if __name__ == '__main__':
         cv2.imshow('Original', image_bgr)
         cv2.imshow('Resized', image_bgr_resized)
         cv2.imshow('Red', red)
-        cv2.imshow('Reshaped red', reshaped)
+        # The card, with on its right what was read and the possible cards.
+        panel = draw_card_list(last_values, label_models.keys(), card_detected, reshaped.shape[0])
+        cv2.imshow('Reshaped red', np.hstack([reshaped, panel]))
 
         # Press 'q' to exit
         if cv2.waitKey(1) & 0xFF == ord('q'):
