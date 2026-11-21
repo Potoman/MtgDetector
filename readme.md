@@ -94,10 +94,14 @@ source .venvwsl/bin/activate
 python3 src/webcam.py
 ```
 
-The 'Reshaped red' window shows the straightened card and, on its right, the mana cost, rarity and set read,
-then the possible cards found in the local scryfall data (`src/search.py`, offline) once the set and the
-mana cost are read. Every downloaded expansion printing the read set symbol is searched (ex: `dsk` symbol:
-`dsk` and its promos `pdsk`).
+The 'Reshaped red' window is a triptych:
+- left: the straightened card of the webcam, with the windows of the models
+- middle: the mana cost, power / toughness, rarity and set read, then the possible cards found in the local
+  scryfall data (`src/search.py`, offline) once the set and the mana cost are read. Every downloaded expansion
+  printing the read set symbol is searched (ex: `dsk` symbol: `dsk` and its promos `pdsk`). A power / toughness
+  that matches no card (a wrong read, an old Clone printed `★/★` but `0/0` in the data) is not used.
+- right: the card found, from `scryfall/exp/exp_<set>/image/`, when every possible card is the same card (its
+  printings in an expansion and its promos count as one)
 
 # Study
 

@@ -2,27 +2,34 @@ import functools
 import json
 import unicodedata
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Collection, Dict, List, Optional
+from typing import Collection, Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
+import download
 import local_paths
 import overlay
+import power_toughness_data_set
 import search
 import set_symbol_data_set
 import training
 import training_corner
 import training_mana_cost
+import training_power_toughness
 
 # Default MTG card size, in pixels.
 CARD_WIDTH = 488
 CARD_HEIGHT = 680
 
-# YOLO detectors trained by the training_<...>.py files: runs/detect/<label>/<name>/<hash>/model.pt.
-# At launch, one model is chosen for each label (ex: 'set', 'mana_cost').
+# YOLO detectors trained by the training_<...>.py files: runs/detect/<label>/<name>/<hash>/model.pt, and the
+# classifiers of training_power_toughness.py: runs/classify/power_toughness/<name>/<hash>/model.pt.
+# At launch, one model is chosen for each label (ex: 'set', 'mana_cost', 'power_toughness').
 MODEL_ROOT = local_paths.RUNS_DIR / "detect"
+CLASSIFIER_ROOT = training_power_toughness.OUTPUT_DIR
+PT_LABEL = "power_toughness"
+NO_PT = power_toughness_data_set.NO_VALUE   # The power / toughness read on a card without: 'none'
 # Below this confidence, the prediction is not printed.
 MIN_CONFIDENCE = 0.5
 
@@ -34,7 +41,7 @@ HEADER_SCALE, HEADER_STEP = 0.6, 30     # Font scale and line height (pixels) of
 VALUE_X = 130                           # x of the values read, after their name
 ROW_SCALE, ROW_STEP = 0.5, 21           # Font scale and line height (pixels) of the card list
 COLUMN_GAP = 14
-WHITE, GRAY = (255, 255, 255), (150, 150, 150)
+WHITE, GRAY, GREEN = (255, 255, 255), (150, 150, 150), (90, 220, 90)
 # Rarity written in the color of the set symbol (BGR).
 RARITY_COLORS = {"common": (230, 230, 230), "uncommon": (215, 200, 180), "rare": (60, 190, 230),
                  "mythic": (30, 110, 240)}
@@ -90,7 +97,7 @@ def get_expansion_name(exp_code):
 @dataclass
 class ModelChoice:
     label: str      # ex: 'set'
-    path: Path      # runs/detect/<label>/<name>/<hash>/model.pt
+    path: Path      # runs/detect/<label>/<name>/<hash>/model.pt, runs/classify/<label>/<name>/<hash>/model.pt
 
     def describe(self) -> str:
         """ex: 'set_gen/7fd31c9062  2026-11-01 07:27  100 epochs'"""
@@ -105,22 +112,38 @@ class ModelChoice:
         return text
 
 
+def is_classifier_path(path: Path) -> bool:
+    """True for a classifier of training_power_toughness.py (its classifier.json next to model.pt)."""
+    return (path.parent / training_power_toughness.CLASSIFIER_INFO_FILE).exists()
+
+
 def list_models() -> Dict[str, List[ModelChoice]]:
-    """Every trained model, by label, the most recent first."""
+    """Every trained model (detectors, power / toughness classifiers), by label, the most recent first."""
     models: Dict[str, List[ModelChoice]] = {}
     for path in MODEL_ROOT.glob("*/*/*/model.pt"):
         label = path.parent.parent.parent.name
         models.setdefault(label, []).append(ModelChoice(label, path))
+    for path in CLASSIFIER_ROOT.glob("*/*/model.pt"):
+        if is_classifier_path(path):
+            models.setdefault(PT_LABEL, []).append(ModelChoice(PT_LABEL, path))
     for choices in models.values():
         choices.sort(key=lambda choice: choice.path.stat().st_mtime, reverse=True)
     return dict(sorted(models.items()))
+
+
+def load_model(choice: ModelChoice) -> dict:
+    """A classifier (training_power_toughness.load_classifier) or a detector (training.load_detector)."""
+    if is_classifier_path(choice.path):
+        return training_power_toughness.load_classifier(choice.path)
+    return training.load_detector(choice.path)
 
 
 def choose_models() -> List[ModelChoice]:
     """For each label, ask which model to use (Enter = the most recent, 0 = none)."""
     models = list_models()
     if not models:
-        print("No trained model found in runs/detect. Run a training first (ex: 'python3 src/training_set_symbol.py').")
+        print("No trained model found in runs/detect or runs/classify. Run a training first "
+              "(ex: 'python3 src/training_set_symbol.py').")
     chosen = []
     for label, choices in models.items():
         print(f"Model for '{label}':")
@@ -140,8 +163,11 @@ def choose_models() -> List[ModelChoice]:
 def describe_value(label, value):
     """
     Text printed for a prediction: the expansion name for 'set' (and the rarity of a set symbol detector
-    of training_set_symbol.py: 'dsk_rare' -> 'Duskmourn: House of Horror (dsk), rare'), the value otherwise.
+    of training_set_symbol.py: 'dsk_rare' -> 'Duskmourn: House of Horror (dsk), rare'), the value otherwise
+    ('none' for the power / toughness: 'none (no power / toughness)').
     """
+    if label == PT_LABEL and value == NO_PT:
+        return "none (no power / toughness)"
     if label != "set":
         return value
     code, _, rarity = value.rpartition("_")
@@ -159,6 +185,31 @@ def draw_detection(card_bgr, window, boxes):
     for index, box in enumerate(boxes):
         color = (0, 255, 0) if index % 2 == 0 else (255, 0, 255)
         cv2.rectangle(card_bgr, box[:2], (box[2] - 1, box[3] - 1), color, 1)
+
+
+def read_values(label_models: Dict[str, dict], card_bgr: np.ndarray, drawn_on: np.ndarray
+                ) -> Dict[str, Tuple[Optional[str], float]]:
+    """
+    Every model reads the straightened card card_bgr, in the window of its training (detector.json /
+    classifier.json next to model.pt); the window and the boxes found are drawn on drawn_on.
+    :return: label -> (value, confidence), value None: nothing read.
+    """
+    reads = {}
+    for label, bundle in label_models.items():
+        if training_power_toughness.is_classifier(bundle):
+            # The value of the whole window, no box: '2/3', 'none' (no power / toughness).
+            value, confidence = training_power_toughness.read_power_toughness(bundle, card_bgr, MIN_CONFIDENCE)
+            window, boxes = training_power_toughness.window_box(bundle), []
+        elif training_mana_cost.is_mana_cost_detector(bundle):
+            # One box per mana symbol, joined into the mana cost: '{1}{W}{W}'.
+            value, confidence, boxes = training_mana_cost.read_mana_cost(bundle, card_bgr, MIN_CONFIDENCE)
+            window = training.search_window(bundle)
+        else:
+            value, confidence, box = training.detect(bundle, card_bgr, MIN_CONFIDENCE)
+            window, boxes = training.search_window(bundle), [box] if box is not None else []
+        draw_detection(drawn_on, window, boxes)
+        reads[label] = (value, confidence)
+    return reads
 
 
 @functools.lru_cache(maxsize=None)
@@ -179,15 +230,117 @@ def icon_exp_codes() -> Dict[str, List[str]]:
 
 
 @functools.lru_cache(maxsize=64)
-def find_cards(icon: str, rarity: Optional[str], mana_cost: Optional[str]) -> List[dict]:
+def find_cards(icon: str, rarity: Optional[str], mana_cost: Optional[str],
+               power_toughness: Optional[str] = None) -> List[dict]:
     """
-    The cards of the local scryfall data (search.py) printing the set symbol `icon`, with that rarity and mana
-    cost (None: any), sorted by expansion then collector number. Cached: called every frame.
+    The cards of the local scryfall data (search.py) printing the set symbol `icon`, with that rarity, mana
+    cost and power / toughness ('none': without), None: any, sorted by expansion then collector number.
+    Cached: called every frame.
     """
     cards = []
     for exp_code in icon_exp_codes().get(icon, []):
-        cards += search.search(search.SearchCriteria(exp_code, rarity, mana_cost))
+        cards += search.search(search.SearchCriteria(exp_code, rarity, mana_cost, power_toughness))
     return cards
+
+
+@dataclass
+class SearchResult:
+    """The search of the card read (run_search): what the panel and the found card show."""
+    message: Optional[str] = None           # Why there is no list (no card, a value not read yet...)
+    cards: List[dict] = field(default_factory=list)
+    power_toughness: Optional[str] = None   # The power / toughness used ('none': without), None: not used
+    pt_ignored: bool = False                # The power / toughness read matches no card: searched without it
+    found: Optional[dict] = None            # The card found (found_card), None: no card or several
+
+
+def _oracle_id(card: dict) -> str:
+    """The id of the card whatever its printing (expansion, promo...), its name without one."""
+    faces = card.get("card_faces") or [{}]
+    return card.get("oracle_id") or faces[0].get("oracle_id") or card.get("name", "")
+
+
+def found_card(cards: List[dict], icon: str) -> Optional[dict]:
+    """
+    The card found: every card of the list is the same card (same oracle id: an expansion and its promos share
+    the set symbol, ex: dsk and pdsk), the printing of the expansion of the symbol if there is one.
+    None: no card, or several different cards.
+    """
+    if not cards or len({_oracle_id(card) for card in cards}) != 1:
+        return None
+    return next((card for card in cards if card.get("set") == icon), cards[0])
+
+
+def run_search(read: Dict[str, str], labels: Collection[str], card_detected: bool) -> SearchResult:
+    """
+    The cards matching what was read, once the set (with its rarity) and the mana cost are read (the power /
+    toughness is used once read, not waited for). A power / toughness that matches no card (a wrong read, or an
+    old card printed with another value than its JSON one: Clone '★/★', 0/0) is not used.
+    :param read: last value read for each label
+    :param labels: the labels having a model: the value of a label without model is not waited for
+    """
+    if not card_detected:
+        return SearchResult("No card")
+    if "set" not in labels:
+        return SearchResult("No 'set' model: no search")
+    waiting = [label for label in ("set", "mana_cost") if label in labels and label not in read]
+    if waiting:
+        return SearchResult(f"Reading the {' and the '.join(label.replace('_', ' ') for label in waiting)}...")
+    icon, rarity = set_symbol_data_set.parse_class(read["set"])
+    if icon not in icon_exp_codes():
+        return SearchResult(f"No expansion of the '{icon}' symbol in scryfall/exp: run src/download.py")
+    mana_cost, power_toughness = read.get("mana_cost"), read.get(PT_LABEL)
+    cards = find_cards(icon, rarity, mana_cost, power_toughness)
+    if power_toughness and not cards:
+        cards = find_cards(icon, rarity, mana_cost)
+        return SearchResult(cards=cards, pt_ignored=True, found=found_card(cards, icon))
+    return SearchResult(cards=cards, power_toughness=power_toughness, found=found_card(cards, icon))
+
+
+def card_image_path(card: dict, power_toughness: Optional[str]) -> Optional[Path]:
+    """
+    The image on disk of a card (scryfall/exp/exp_<set>/image/<illustration id>.jpg): of its face whose power /
+    toughness is the one read ('none': without), else of its first face. None: the card has no image.
+    """
+    images = download.get_card_images(card)
+    if not images:
+        return None
+    values = search.image_power_toughness(card)
+    wanted = None if power_toughness == NO_PT else power_toughness
+    index = next((i for i, value in enumerate(values) if power_toughness and value == wanted and i < len(images)), 0)
+    return local_paths.EXP_DIR / f"exp_{card['set']}" / "image" / f"{images[index][0]}.jpg"
+
+
+@functools.lru_cache(maxsize=32)
+def _card_image(path: str) -> Optional[np.ndarray]:
+    """A card image of the disk, resized to CARD_WIDTH x CARD_HEIGHT (cached), None if unreadable."""
+    image = cv2.imread(path)
+    return None if image is None else cv2.resize(image, (CARD_WIDTH, CARD_HEIGHT), interpolation=cv2.INTER_AREA)
+
+
+def blank_card(lines: List[str]) -> np.ndarray:
+    """A black CARD_WIDTH x CARD_HEIGHT image with these lines in the middle (gray)."""
+    blank = np.zeros((CARD_HEIGHT, CARD_WIDTH, 3), dtype=np.uint8)
+    y = CARD_HEIGHT // 2 - (len(lines) - 1) * HEADER_STEP // 2
+    for line in lines:
+        text = _ascii(line)
+        x = max(PANEL_MARGIN, (CARD_WIDTH - _text_width(text, HEADER_SCALE)) // 2)
+        _put_text(blank, text, x, y, HEADER_SCALE, GRAY, CARD_WIDTH - 2 * PANEL_MARGIN)
+        y += HEADER_STEP
+    return blank
+
+
+def draw_found_card(result: SearchResult) -> np.ndarray:
+    """The right of the triptych: the image of the card found (of the database), else why there is none."""
+    if result.found is None:
+        if result.message:
+            return blank_card([result.message])
+        return blank_card(["No card found"] if not result.cards else [f"{len(result.cards)} possible cards",
+                                                                     "Not one card yet"])
+    path = card_image_path(result.found, result.power_toughness)
+    image = _card_image(str(path)) if path is not None else None
+    if image is None:
+        return blank_card([result.found.get("name", ""), "Image not downloaded (src/download.py)"])
+    return image
 
 
 def _ascii(text: str) -> str:
@@ -208,13 +361,13 @@ def _put_text(image, text: str, x: int, y: int, scale: float, color, max_width: 
     cv2.putText(image, text, (x, y), PANEL_FONT, scale, color, 1, cv2.LINE_AA)
 
 
-def draw_card_list(read: Dict[str, str], labels: Collection[str], card_detected: bool, height: int) -> np.ndarray:
+def draw_card_list(result: SearchResult, read: Dict[str, str], labels: Collection[str], height: int) -> np.ndarray:
     """
-    Panel shown on the right of the reshaped card. On top, what was read: mana cost, rarity and set. Below,
-    once the set (with its rarity) and the mana cost are read, the matching cards of the local scryfall data.
-    :param read: last value read for each label ('set': '<icon>_<rarity>' or '<icon>', 'mana_cost': '{1}{W}{W}')
-    :param labels: the labels having a model: the value of a label without model is not waited for
-    :param card_detected: False when no card is detected
+    The middle of the triptych. On top, what was read: mana cost, power / toughness, rarity and set. Below, the
+    cards of the search (run_search), the card found in green, or why there is no list.
+    :param read: last value read for each label ('set': '<icon>_<rarity>' or '<icon>', 'mana_cost': '{1}{W}{W}',
+                 'power_toughness': '2/3' or 'none')
+    :param labels: the labels having a model
     :param height: height of the panel (the one of the reshaped card)
     """
     panel = np.zeros((height, PANEL_WIDTH, 3), dtype=np.uint8)
@@ -224,13 +377,20 @@ def draw_card_list(read: Dict[str, str], labels: Collection[str], card_detected:
         return "?" if label in labels else "(no model)"
 
     icon, rarity = set_symbol_data_set.parse_class(read["set"]) if "set" in read else (None, None)
-    mana_cost = read.get("mana_cost")
+    mana_cost, power_toughness = read.get("mana_cost"), read.get(PT_LABEL)
     if icon is None:
         set_text, rarity_text = unknown("set"), unknown("set")
     else:
         set_text = f"{get_expansion_name(icon)} ({icon})"
         rarity_text = rarity or "any (old symbol)"
+    if power_toughness is None:
+        pt_text = unknown(PT_LABEL)
+    else:
+        pt_text = "none (no P/T)" if power_toughness == NO_PT else power_toughness
+        if result.pt_ignored:
+            pt_text += "  (no card has it: not used)"
     header = [("Mana cost", mana_cost or unknown("mana_cost"), WHITE),
+              ("P/T", pt_text, GRAY if result.pt_ignored else WHITE),
               ("Rarity", rarity_text, RARITY_COLORS.get(rarity, WHITE)),
               ("Set", set_text, WHITE)]
     y = PANEL_MARGIN
@@ -246,18 +406,15 @@ def draw_card_list(read: Dict[str, str], labels: Collection[str], card_detected:
         _put_text(panel, text, PANEL_MARGIN, y, ROW_SCALE, GRAY, right - PANEL_MARGIN)
         return panel
 
-    if not card_detected:
-        return message("No card")
-    if "set" not in labels:
-        return message("No 'set' model: no search")
-    waiting = [label for label in ("set", "mana_cost") if label in labels and label not in read]
-    if waiting:
-        return message(f"Reading the {' and the '.join(label.replace('_', ' ') for label in waiting)}...")
-    if icon not in icon_exp_codes():
-        return message(f"No expansion of the '{icon}' symbol in scryfall/exp: run src/download.py")
-
-    cards = find_cards(icon, rarity, mana_cost)
-    _put_text(panel, f"{len(cards)} possible card(s)", PANEL_MARGIN, y, ROW_SCALE, WHITE, right - PANEL_MARGIN)
+    if result.message:
+        return message(result.message)
+    cards = result.cards
+    if result.found is not None:
+        prints = f" ({len(cards)} printings)" if len(cards) > 1 else ""
+        _put_text(panel, f"Found: {result.found.get('name', '')}{prints}", PANEL_MARGIN, y, ROW_SCALE, GREEN,
+                  right - PANEL_MARGIN)
+    else:
+        _put_text(panel, f"{len(cards)} possible card(s)", PANEL_MARGIN, y, ROW_SCALE, WHITE, right - PANEL_MARGIN)
     y += ROW_STEP + 4
 
     # Columns: expansion (only when several), collector number, name.
@@ -283,9 +440,10 @@ if __name__ == '__main__':
     # label -> loaded model
     label_models = {}
     for choice in choose_models():
-        bundle = training.load_detector(choice.path)
+        bundle = load_model(choice)
         label_models[choice.label] = bundle
-        print(f"'{choice.label}' model loaded: {choice.path} ({len(bundle['classes'])} classes).")
+        classes = bundle["values"] if training_power_toughness.is_classifier(bundle) else bundle["classes"]
+        print(f"'{choice.label}' model loaded: {choice.path} ({len(classes)} classes).")
     # Card corners: YOLO Pose (training_corner.py).
     model = training_corner.load_yolo_pose_model()
 
@@ -304,6 +462,7 @@ if __name__ == '__main__':
 
     # Last value printed for each label, so the console is not flooded with the same value every frame.
     last_values = {}
+    last_found = None  # Scryfall id of the card found last printed
 
     while True:
         # Capture frame-by-frame
@@ -331,26 +490,24 @@ if __name__ == '__main__':
             last_values.clear()
         else:
             # Every model reads the same clean card: the rectangles are drawn on `reshaped` only.
-            card = reshaped.copy()
-            for label, bundle in label_models.items():
-                # Same search window as the training: it is saved in detector.json next to model.pt.
-                if training_mana_cost.is_mana_cost_detector(bundle):
-                    # One box per mana symbol, joined into the mana cost: '{1}{W}{W}'.
-                    value, confidence, boxes = training_mana_cost.read_mana_cost(bundle, card, MIN_CONFIDENCE)
-                else:
-                    value, confidence, box = training.detect(bundle, card, MIN_CONFIDENCE)
-                    boxes = [box] if box is not None else []
-                draw_detection(reshaped, training.search_window(bundle), boxes)
+            for label, (value, confidence) in read_values(label_models, reshaped.copy(), reshaped).items():
                 if value is not None and value != last_values.get(label):
                     print(f"{label}: {describe_value(label, value)} - {confidence:.0%}")
                     last_values[label] = value
 
+        # Triptych: the card of the webcam, what was read and the possible cards, the card found in the database.
+        result = run_search(last_values, label_models.keys(), card_detected)
+        found_id = result.found.get("id") if result.found else None
+        if found_id and found_id != last_found:
+            print(f"Card found: {result.found.get('name')} ({result.found.get('set')} "
+                  f"#{result.found.get('collector_number')})")
+        last_found = found_id
+
         cv2.imshow('Original', image_bgr)
         cv2.imshow('Resized', image_bgr_resized)
         cv2.imshow('Red', red)
-        # The card, with on its right what was read and the possible cards.
-        panel = draw_card_list(last_values, label_models.keys(), card_detected, reshaped.shape[0])
-        cv2.imshow('Reshaped red', np.hstack([reshaped, panel]))
+        panel = draw_card_list(result, last_values, label_models.keys(), reshaped.shape[0])
+        cv2.imshow('Reshaped red', np.hstack([reshaped, panel, draw_found_card(result)]))
 
         # Press 'q' to exit
         if cv2.waitKey(1) & 0xFF == ord('q'):

@@ -468,12 +468,23 @@ def load_classifier(model_path) -> dict:
     return bundle
 
 
+def is_classifier(bundle: dict) -> bool:
+    """True for a model of this file (load_classifier), False for a detector (training.load_detector)."""
+    return bundle.get("classifier") == "power_toughness"
+
+
+def window_box(bundle: dict) -> Tuple[int, int, int, int]:
+    """(x0, y0, x1, y1) of the window of the classifier, in CARD_WIDTH x CARD_HEIGHT card coordinates."""
+    rect = bundle["rect"]
+    x0, y0 = int(rect.center_x - rect.width / 2), int(rect.center_y - rect.height / 2)
+    return x0, y0, x0 + int(rect.width), y0 + int(rect.height)
+
+
 def window_of(bundle: dict, card_bgr: np.ndarray) -> np.ndarray:
     """The window of the classifier on a straightened card (any size, resized to CARD_WIDTH x CARD_HEIGHT)."""
     card_bgr = cv2.resize(card_bgr, (training.CARD_WIDTH, training.CARD_HEIGHT), interpolation=cv2.INTER_LINEAR)
-    rect = bundle["rect"]
-    x0, y0 = int(rect.center_x - rect.width / 2), int(rect.center_y - rect.height / 2)
-    return card_bgr[y0:y0 + int(rect.height), x0:x0 + int(rect.width)].copy()  # Not a view: the card is freed
+    x0, y0, x1, y1 = window_box(bundle)
+    return card_bgr[y0:y1, x0:x1].copy()  # Not a view: the card is freed
 
 
 def classify_windows(bundle: dict, windows: List[np.ndarray]) -> List[Tuple[str, float]]:
