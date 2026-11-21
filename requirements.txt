@@ -1,5 +1,4 @@
-opencv-python
-opencv-contrib-python
+opencv-contrib-python==5.0.0.93
 pillow
 matplotlib
 tqdm

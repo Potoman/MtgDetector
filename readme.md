@@ -99,3 +99,23 @@ python src/webcam.py
 The result with Yolo Pose is really good.
 The trapezoid is well detected wherever the card are. The tilt of the card shouldn't exceed some degree but
 I can improve this with a better dataset ok keep it that way. User will not tilt there card for fun on a scan process.
+
+# Support video on WSL
+
+In Powershell :
+
+```Powershell
+winget install --interactive --exact dorssel.usbipd-win
+usbipd list                          # find your webcam's BUSID, e.g. 2-3
+usbipd bind --busid 2-3              # once
+usbipd attach --wsl --busid 2-3      # each time you start WSL
+```
+
+Then check in WSL :
+
+```bash
+sudo modprobe uvcvideo
+ls /dev/video*                       # should show /dev/video0
+sudo apt install v4l-utils
+v4l2-ctl --list-devices
+```
