@@ -18,9 +18,13 @@
 
 ![No card](resources/no_card.png)
 
-## Environnement : WSL Ubuntu 24.04
+## Environment: WSL Ubuntu 24.04
 
-### 1. Installation des dépendances
+The data is inside the repository, ignored by git (see `src/local_paths.py`):
+- `scryfall/`: what `src/download.py` downloads (cards, images, symbols),
+- `runs/`: what the trainings write (datasets, models), read by `src/webcam.py`.
+
+### 1. Install the dependencies
 
 ```bash
 python3 -m venv .venvwsl
@@ -31,49 +35,49 @@ pip install -r requirements.txt
 
 ---
 
-## Entraîner le modèle YOLO Pose (model 5)
+## Train the YOLO Pose model (model 5)
 
-### 2. Configurer le modèle
+### 2. Configure the model
 
-Dans `src/algo_corner_detection.py`, ligne 20 :
+In `src/algo_corner_detection.py`, line 20:
 
 ```python
 selection_model = 5
 ```
 
-### 3. Lancer l'entraînement
+### 3. Start the training
 
 ```bash
 source .venvwsl/bin/activate
 python3 src/algo_corner_detection.py
 ```
 
-Cela va automatiquement :
-- Générer 2000 images synthétiques dans `yolo_pose_dataset/`
-- Télécharger `yolov8s-pose.pt` (~22 MB) depuis Ultralytics
-- Entraîner le modèle (50 epochs)
-- Sauvegarder le meilleur modèle dans `runs/pose/card_corners/weights/best.pt`
+This automatically:
+- Generates 2000 synthetic images in `runs/yolo_pose_dataset/`
+- Downloads `yolov8s-pose.pt` (~22 MB) from Ultralytics
+- Trains the model (50 epochs)
+- Saves the best model in `runs/pose/card_corners/weights/best.pt`
 
 ---
 
-## Entraîner les modèles Keras (model 0 à 4)
+## Train the Keras models (model 0 to 4)
 
-### 2. Configurer le modèle
+### 2. Configure the model
 
-Dans `src/algo_corner_detection.py`, ligne 20 :
+In `src/algo_corner_detection.py`, line 20:
 
 ```python
-selection_model = 0  # ou 1, 2, 3, 4
+selection_model = 0  # or 1, 2, 3, 4
 ```
 
-### 3. Pré-générer le dataset (optionnel, recommandé)
+### 3. Pre-generate the dataset (optional, recommended)
 
 ```bash
 source .venvwsl/bin/activate
 python3 src/dataset.py
 ```
 
-### 4. Lancer l'entraînement
+### 4. Start the training
 
 ```bash
 source .venvwsl/bin/activate
@@ -82,7 +86,7 @@ python3 src/training_corner.py
 
 ---
 
-## Inference webcam (Windows uniquement)
+## Webcam inference
 
 ```Powershell
 python -m venv .venvwin
@@ -92,7 +96,7 @@ pip install -r requirements.txt
 python src/webcam.py
 ```
 
-> `selection_model` doit correspondre au modèle entraîné.
+> `selection_model` must match the trained model.
 
 # Study
 
