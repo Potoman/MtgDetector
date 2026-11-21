@@ -177,6 +177,12 @@ if __name__ == '__main__':
         print("Cannot open camera")
         exit()
 
+    # MJPG, not the default raw YUYV: in WSL the webcam goes through usbipd (USB over the network), too slow
+    # for raw frames, which arrive torn (horizontal stripes of different frames). 640x480: the crop below.
+    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+
     # Last value printed for each label, so the console is not flooded with the same value every frame.
     last_values = {}
 
