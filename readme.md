@@ -58,6 +58,33 @@ Other cards or dataset size: change that call, ex:
 
 ---
 
+## Train the power / toughness classifier (YOLO classify)
+
+```bash
+source .venvwsl/bin/activate
+python3 src/training_power_toughness.py
+```
+
+Asks the number of samples, the percent of them for the validation and the percent without power / toughness,
+then (`src/power_toughness_data_set.py`):
+- One class per power / toughness found in the local scryfall data (both sides `[0-9*+]+`: `0/1`, `*/1+*`, ...),
+  and `none`: no power / toughness (generated: the same images without the value, or a lone number, or words;
+  validated on real cards without power / toughness: instants, lands, planeswalkers...)
+- Train: generated 100x60 images, the same number per class, of three kinds (4 : 2 : 3):
+  - plain: a plain or gradient background, around the value, sometimes, a P/T box, lines and a small text (without
+    them the model read the box edges as characters: 17% of the real cards read right instead of 98%)
+  - noise: the same with a strong noise on the background
+  - old frame: the textured frame of a real 1993 / 1997 card without power / toughness (never a validation card)
+  - the value in black or white (random font, size, place, `*` sometimes drawn `★` as on the cards), one text in
+    two with a blurred shadow of the other color (white text, black shadow, as the old frames)
+- Val: real cards only (never Arena / online only cards), the 100x60 window at the bottom right of the card
+  (x 364-464, y 592-652)
+- Augmentations: the ones of the set symbol detector (zoom, blur, gamma, saturation, brightness)
+- Saves the model in `runs/classify/power_toughness/pt_gen/<hash>/model.pt`, the errors of the validation in
+  its `yolo/pt_errors.json` and `yolo/class_errors.csv`
+
+---
+
 ## Webcam inference
 
 Connect the webcam to WSL first (see "Support video on WSL" below).
