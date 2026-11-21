@@ -1,9 +1,6 @@
-"""YOLO Pose (model 5): dataset generation, training and inference.
+"""Card corner detection with YOLO Pose: dataset generation, training and inference.
 
-Uses Ultralytics / PyTorch only. Do not import TensorFlow (or modules that
-import it, such as algo_corner_detection, dataset or algo) from this file:
-loading TensorFlow and PyTorch in the same process can make their CUDA
-libraries clash.
+    python3 src/training_corner.py    (see train_yolo_pose and the call at the end of this file)
 """
 import json
 import os

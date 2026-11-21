@@ -2,7 +2,6 @@ opencv-contrib-python==5.0.0.93
 pillow
 matplotlib
 tqdm
-tensorflow
 ultralytics
 torch
 requests

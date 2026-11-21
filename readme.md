@@ -35,68 +35,37 @@ pip install -r requirements.txt
 
 ---
 
-## Train the YOLO Pose model (model 5)
-
-### 2. Configure the model
-
-In `src/algo_corner_detection.py`, line 20:
-
-```python
-selection_model = 5
-```
-
-### 3. Start the training
-
-```bash
-source .venvwsl/bin/activate
-python3 src/algo_corner_detection.py
-```
-
-This automatically:
-- Generates 2000 synthetic images in `runs/yolo_pose_dataset/`
-- Downloads `yolov8s-pose.pt` (~22 MB) from Ultralytics
-- Trains the model (50 epochs)
-- Saves the best model in `runs/pose/card_corners/weights/best.pt`
-
----
-
-## Train the Keras models (model 0 to 4)
-
-### 2. Configure the model
-
-In `src/algo_corner_detection.py`, line 20:
-
-```python
-selection_model = 0  # or 1, 2, 3, 4
-```
-
-### 3. Pre-generate the dataset (optional, recommended)
-
-```bash
-source .venvwsl/bin/activate
-python3 src/dataset.py
-```
-
-### 4. Start the training
+## Train the card corner model (YOLO Pose)
 
 ```bash
 source .venvwsl/bin/activate
 python3 src/training_corner.py
 ```
 
+This runs `train_yolo_pose(count=1000, frame="2015")` (end of `src/training_corner.py`), which:
+- Picks 1000 card images of the 2015 frame, spread evenly over the expansions of `scryfall/exp/`, and downloads
+  the missing ones
+- Generates the dataset in `runs/yolo_pose_dataset/all_frame-2015/1000/`: each card in perspective on a noisy
+  background, 400x400, labelled with its 4 corners (10% for the validation). A dataset that already has enough
+  images is reused: delete its folder to generate it again
+- Downloads `yolov8s-pose.pt` (~22 MB) from Ultralytics if it is not in the current folder
+- Trains the model (400 epochs)
+- Saves the best model in `runs/pose/card_corners/weights/best.pt` (replacing the previous one), read by
+  `src/webcam.py`
+
+Other cards or dataset size: change that call, ex:
+`train_yolo_pose(count=2000, exp_code=["dsk", "blb"], frame=["2003", "2015"])`.
+
 ---
 
 ## Webcam inference
 
-```Powershell
-python -m venv .venvwin
-.venvwin\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-pip install -r requirements.txt
-python src/webcam.py
-```
+Connect the webcam to WSL first (see "Support video on WSL" below).
 
-> `selection_model` must match the trained model.
+```bash
+source .venvwsl/bin/activate
+python3 src/webcam.py
+```
 
 # Study
 

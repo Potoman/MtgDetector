@@ -1,6 +1,7 @@
 import cv2
 import crop
 import json
+import numpy as np
 import random
 from typing import Dict, List
 
@@ -37,8 +38,25 @@ def get_bgra_random(exp_code: str):
     return crop.get_bgra_image(exp_code, get_illustration_id_random(exp_code))
 
 
+def pass_canny(image):
+    original = image.copy()
+    gray = cv2.cvtColor(original, cv2.COLOR_BGR2GRAY)
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    # Detect edges with Canny
+    edges = cv2.Canny(blurred, 50, 150)
+    lines = cv2.HoughLinesP(edges, rho=1, theta=1*np.pi/180, threshold=100, minLineLength=100, maxLineGap=50)
+
+    if lines is None:
+        return original
+
+    for i in lines:
+        x1, x2, y1, y2 = i[0]
+        cv2.line(original, (x1, x2), (y1, y2), (0, 255, 0), 3)
+
+    return original
+
+
 def webcam_to_canny():
-    import algo  # imported here: algo loads TensorFlow, which must not be loaded with YOLO
     cap = cv2.VideoCapture(0)
 
     # Check if the webcam is opened
@@ -55,7 +73,7 @@ def webcam_to_canny():
             print("Can't receive frame (stream end?). Exiting ...")
             break
 
-        image = algo.pass_canny(frame)
+        image = pass_canny(frame)
         # Display the resulting frame
         cv2.imshow('Canny', image)
 

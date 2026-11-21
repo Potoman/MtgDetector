@@ -15,11 +15,9 @@ import training_mana_cost
 CARD_WIDTH = 488
 CARD_HEIGHT = 680
 
-# Models trained by the training_<...>.py files: runs/<detect|classify>/<label>/<name>/<hash>/model.pt.
+# YOLO detectors trained by the training_<...>.py files: runs/detect/<label>/<name>/<hash>/model.pt.
 # At launch, one model is chosen for each label (ex: 'set', 'mana_cost').
-YOLO_DETECT = "YOLO detect"   # TrainingYoloDetect
-BASIC_CNN = "basic CNN"       # TrainingDefinition
-MODEL_ROOTS = {YOLO_DETECT: local_paths.RUNS_DIR / "detect", BASIC_CNN: local_paths.RUNS_DIR / "classify"}
+MODEL_ROOT = local_paths.RUNS_DIR / "detect"
 # Below this confidence, the prediction is not printed.
 MIN_CONFIDENCE = 0.5
 
@@ -74,14 +72,13 @@ def get_expansion_name(exp_code):
 @dataclass
 class ModelChoice:
     label: str      # ex: 'set'
-    kind: str       # YOLO_DETECT or BASIC_CNN
-    path: Path      # runs/<detect|classify>/<label>/<name>/<hash>/model.pt
+    path: Path      # runs/detect/<label>/<name>/<hash>/model.pt
 
     def describe(self) -> str:
-        """ex: 'YOLO detect  set/7fd31c9062  2026-11-01 07:27  100 epochs'"""
+        """ex: 'set_gen/7fd31c9062  2026-11-01 07:27  100 epochs'"""
         import datetime
         date = datetime.datetime.fromtimestamp(self.path.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
-        text = f"{self.kind:<11}  {self.path.parent.parent.name}/{self.path.parent.name}  {date}"
+        text = f"{self.path.parent.parent.name}/{self.path.parent.name}  {date}"
         try:
             with open(self.path.parent / "training.json", "r", encoding="utf-8") as fp:
                 text += f"  {json.load(fp)['epochs']} epochs"
@@ -93,10 +90,9 @@ class ModelChoice:
 def list_models() -> Dict[str, List[ModelChoice]]:
     """Every trained model, by label, the most recent first."""
     models: Dict[str, List[ModelChoice]] = {}
-    for kind, root in MODEL_ROOTS.items():
-        for path in root.glob("*/*/*/model.pt"):
-            label = path.parent.parent.parent.name
-            models.setdefault(label, []).append(ModelChoice(label, kind, path))
+    for path in MODEL_ROOT.glob("*/*/*/model.pt"):
+        label = path.parent.parent.parent.name
+        models.setdefault(label, []).append(ModelChoice(label, path))
     for choices in models.values():
         choices.sort(key=lambda choice: choice.path.stat().st_mtime, reverse=True)
     return dict(sorted(models.items()))
@@ -106,7 +102,7 @@ def choose_models() -> List[ModelChoice]:
     """For each label, ask which model to use (Enter = the most recent, 0 = none)."""
     models = list_models()
     if not models:
-        print("No trained model found in runs/detect or runs/classify. Run a training first (ex: 'python src/training_set.py').")
+        print("No trained model found in runs/detect. Run a training first (ex: 'python3 src/training_set_symbol.py').")
     chosen = []
     for label, choices in models.items():
         print(f"Model for '{label}':")
@@ -136,15 +132,6 @@ def describe_value(label, value):
     return f"{get_expansion_name(value)} ({value})"
 
 
-def draw_rect(card_bgr, rect):
-    """Draw the classifier rectangle on the reshaped card, to check its position."""
-    x0 = int(round(rect.center_x - rect.width / 2))
-    y0 = int(round(rect.center_y - rect.height / 2))
-    x1 = int(round(rect.center_x + rect.width / 2))
-    y1 = int(round(rect.center_y + rect.height / 2))
-    cv2.rectangle(card_bgr, (x0, y0), (x1, y1), (0, 255, 0), 1)
-
-
 def draw_detection(card_bgr, window, boxes):
     """
     Draw the detector search window (gray) and the symbol box(es) it found on the reshaped card,
@@ -157,14 +144,11 @@ def draw_detection(card_bgr, window, boxes):
 
 
 if __name__ == '__main__':
-    # label -> (kind, loaded model)
+    # label -> loaded model
     label_models = {}
     for choice in choose_models():
-        if choice.kind == YOLO_DETECT:
-            bundle = training.load_detector(choice.path)
-        else:
-            bundle = training.load_classifier(choice.path)
-        label_models[choice.label] = (choice.kind, bundle)
+        bundle = training.load_detector(choice.path)
+        label_models[choice.label] = bundle
         print(f"'{choice.label}' model loaded: {choice.path} ({len(bundle['classes'])} classes).")
     # Card corners: YOLO Pose (training_corner.py).
     model = training_corner.load_yolo_pose_model()
@@ -211,22 +195,15 @@ if __name__ == '__main__':
         else:
             # Every model reads the same clean card: the rectangles are drawn on `reshaped` only.
             card = reshaped.copy()
-            for label, (kind, bundle) in label_models.items():
-                if kind == YOLO_DETECT:
-                    # Same search window as the training: it is saved in detector.json next to model.pt.
-                    if training_mana_cost.is_mana_cost_detector(bundle):
-                        # One box per mana symbol, joined into the mana cost: '{1}{W}{W}'.
-                        value, confidence, boxes = training_mana_cost.read_mana_cost(bundle, card, MIN_CONFIDENCE)
-                    else:
-                        value, confidence, box = training.detect(bundle, card, MIN_CONFIDENCE)
-                        boxes = [box] if box is not None else []
-                    draw_detection(reshaped, training.search_window(bundle), boxes)
+            for label, bundle in label_models.items():
+                # Same search window as the training: it is saved in detector.json next to model.pt.
+                if training_mana_cost.is_mana_cost_detector(bundle):
+                    # One box per mana symbol, joined into the mana cost: '{1}{W}{W}'.
+                    value, confidence, boxes = training_mana_cost.read_mana_cost(bundle, card, MIN_CONFIDENCE)
                 else:
-                    # Same rectangle as the training: it is saved in model.pt.
-                    value, confidence = training.predict(bundle, card)
-                    if confidence < MIN_CONFIDENCE:
-                        value = None
-                    draw_rect(reshaped, bundle["rect"])
+                    value, confidence, box = training.detect(bundle, card, MIN_CONFIDENCE)
+                    boxes = [box] if box is not None else []
+                draw_detection(reshaped, training.search_window(bundle), boxes)
                 if value is not None and value != last_values.get(label):
                     print(f"{label}: {describe_value(label, value)} - {confidence:.0%}")
                     last_values[label] = value
